@@ -63,3 +63,19 @@
   - `python -m unittest discover -s benchmarks/tests -v` → 6/6 unit tests passed (`OK`).
   - `PyYAML` validation of `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and `.github/dependabot.yml` → all valid YAML.
 - **Next Pending Step:** `@verifier-services` to verify CI workflows, IoU benchmark harness, and docs; `@release` continuing to monitor board and record completed worker summaries in `memory.md`.
+
+### [2026-11-19 00:35] — Agent: release (gemini-4-hydrogen-xhigh)
+- **Task:** Fix all 6 findings raised by `@verifier-services` (#17) on CI workflows, release signing order, benchmark `--cases-dir`, and docs alignment, and get re-verification.
+- **Status:** Completed (Verified by `@verifier-services` in #23)
+- **Files Created / Modified:**
+  - `.github/workflows/release.yml` — Injected `bundle.windows.signCommand` via `--config` before `tauri-apps/tauri-action@v0` updater signing, added `Cargo.lock` guard and `workflow_dispatch` tag support.
+  - `.github/workflows/ci.yml` — Guarded `--locked` on `Cargo.lock`, avoided `setup-node` cache errors when `package-lock.json` is absent, generated transient lockfiles for `npm audit` / `cargo audit`.
+  - `benchmarks/run_benchmark.py` & `benchmarks/tests/test_benchmark.py` — Fixed relative image resolution to `case_path.parent / case["image_path"]` for custom `--cases-dir`; added custom dir test.
+  - `docs/mcp-setup.md`, `docs/cloud-deploy.md`, `docs/getting-started.md`, `docs/code-signing-and-updater.md` — Aligned MCP entrypoints (`dist/mcp-bin.js` / `cli.js`), cloud env vars/schema/`MeResponse`, `guidelens_local.db` path, and signing order docs.
+- **Architectural / Schema Changes:** None.
+- **Verification / Test Results:**
+  - PyYAML syntax validation (`ci.yml`, `release.yml`, `dependabot.yml`) → `YAML OK`.
+  - `python benchmarks/run_benchmark.py --validate-only` → 3/3 passed (Mean IoU 0.875, Release Gate PASSED).
+  - `python -m unittest discover -s benchmarks/tests -v` → 7/7 passed (`OK`).
+  - `@verifier-services` confirmed `release` passes (#23).
+- **Next Pending Step:** Continue monitoring board for completed worker summaries (`mcp`, `cloud`, `core`, `brains`, `frontend`) and update `memory.md` ledger & milestone checklist.
