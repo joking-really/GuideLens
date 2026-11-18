@@ -54,11 +54,21 @@ jobs:
 
       - name: cargo clippy (-D warnings)
         working-directory: apps/desktop/src-tauri
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: |
+          if (Test-Path Cargo.lock) {
+            cargo clippy --all-targets --locked -- -D warnings
+          } else {
+            cargo clippy --all-targets -- -D warnings
+          }
 
       - name: cargo test
         working-directory: apps/desktop/src-tauri
-        run: cargo test --locked
+        run: |
+          if (Test-Path Cargo.lock) {
+            cargo test --locked
+          } else {
+            cargo test
+          }
 
   desktop-web:
     name: Desktop (TS) — tsc + vitest + build
@@ -72,8 +82,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
       - name: Install
         run: if (Test-Path package-lock.json) { npm ci } else { npm install }
       - name: Type check
@@ -95,8 +103,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: packages/guidelens-mcp/package-lock.json
       - name: Install
         run: if (Test-Path package-lock.json) { npm ci } else { npm install }
       - name: Build
@@ -160,15 +166,19 @@ jobs:
       - name: npm audit (desktop)
         working-directory: apps/desktop
         run: |
-          if (Test-Path package-lock.json) { npm audit --audit-level=high --omit=dev } else { Write-Host "no lockfile, skipping" }
+          if (-not (Test-Path package-lock.json)) { npm install --package-lock-only --ignore-scripts }
+          npm audit --audit-level=high --omit=dev
       - name: npm audit (guidelens-mcp)
         working-directory: packages/guidelens-mcp
         run: |
-          if (Test-Path package-lock.json) { npm audit --audit-level=high --omit=dev } else { Write-Host "no lockfile, skipping" }
+          if (-not (Test-Path package-lock.json)) { npm install --package-lock-only --ignore-scripts }
+          npm audit --audit-level=high --omit=dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
       - name: cargo audit
         working-directory: apps/desktop/src-tauri
-        run: cargo audit
+        run: |
+          if (-not (Test-Path Cargo.lock)) { cargo generate-lockfile }
+          cargo audit

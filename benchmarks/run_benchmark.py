@@ -480,8 +480,8 @@ def evaluate_suite(
     api_key: str | None = None,
 ) -> dict[str, Any]:
     results: list[CaseResult] = []
-    for _path, case in cases:
-        img_path = CASES_DIR / case["image_path"]
+    for case_path, case in cases:
+        img_path = case_path.parent / case["image_path"]
         img_b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
         expected_bbox = [float(x) for x in case["expected"]["bbox"]]
         min_iou = float(case["expected"].get("min_iou", iou_threshold))

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -71,6 +73,34 @@ class TestIoUBenchmark(unittest.TestCase):
         self.assertTrue(report["suite_passed"])
         self.assertEqual(report["pass_rate"], 1.0)
         self.assertGreaterEqual(report["mean_iou"], 0.70)
+
+    def test_custom_cases_dir_resolves_relative_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_dir = Path(tmpdir)
+            case_data = {
+                "id": "custom_dir_case_01",
+                "app": "terminal",
+                "active_app_title": "Windows PowerShell",
+                "query": "Open settings tab",
+                "image_path": "images/custom_dir_case_01.png",
+                "screen_resolution": {"width": 1920, "height": 1080, "scale_factor": 1.0},
+                "expected": {
+                    "mode": "guide",
+                    "step_number": 1,
+                    "target_name": "Settings",
+                    "control_type": "MenuItem",
+                    "shortcut": "Ctrl+,",
+                    "bbox": [100, 100, 80, 30],
+                    "min_iou": 0.5,
+                },
+            }
+            (custom_dir / "custom.json").write_text(json.dumps(case_data), encoding="utf-8")
+            cases = bm.load_and_prepare_cases(custom_dir, auto_generate_images=True)
+            self.assertEqual(len(cases), 1)
+            self.assertTrue((custom_dir / "images/custom_dir_case_01.png").exists())
+            report = bm.evaluate_suite(cases, brain="mock", iou_threshold=0.5)
+            self.assertTrue(report["suite_passed"])
+            self.assertEqual(report["passed_cases"], 1)
 
 
 if __name__ == "__main__":

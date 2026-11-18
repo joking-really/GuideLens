@@ -67,40 +67,79 @@ jobs:
           npx vitest run
           npm run build
           Push-Location src-tauri
-          cargo clippy --all-targets -- -D warnings
-          cargo test
+          if (Test-Path Cargo.lock) {
+            cargo clippy --all-targets --locked -- -D warnings
+            cargo test --locked
+          } else {
+            cargo clippy --all-targets -- -D warnings
+            cargo test
+          }
           Pop-Location
 
-      - name: Configure Windows Authenticode certificate (optional placeholder secrets)
+      - name: Configure Windows Authenticode signCommand (before updater signing)
         id: authenticode
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
+          $baseArgs = "--target x86_64-pc-windows-msvc --bundles nsis,msi"
           if (-not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE)) {
-            Write-Host "Decoding WINDOWS_CERTIFICATE into temporary PFX for Authenticode signing..."
+            $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $signtool) {
+              Write-Error "signtool.exe not found in Windows SDK"
+              exit 1
+            }
+
+            Write-Host "Decoding WINDOWS_CERTIFICATE into temporary PFX for Tauri signCommand..."
             $pfxPath = Join-Path $env:RUNNER_TEMP "guidelens-authenticode.pfx"
             [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+
+            $signScript = Join-Path $env:RUNNER_TEMP "sign-artifact.ps1"
+            $scriptLines = @(
+              'param([Parameter(Mandatory=$true)][string]$TargetPath)'
+              'Write-Host "Authenticode signing $TargetPath..."'
+              ('& "{0}" sign /f "$env:PFX_PATH" /p "$env:WINDOWS_CERTIFICATE_PASSWORD" /fd SHA256 /tr "http://timestamp.digicert.com" /td SHA256 "$TargetPath"' -f $signtool)
+              'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+            )
+            Set-Content -Path $signScript -Value ($scriptLines -join "`r`n") -Encoding UTF8
+
+            $signConfigPath = Join-Path $env:RUNNER_TEMP "tauri.sign.conf.json"
+            $signConfigJson = @{
+              bundle = @{
+                windows = @{
+                  signCommand = @{
+                    cmd  = "pwsh"
+                    args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $signScript, "%1")
+                  }
+                }
+              }
+            } | ConvertTo-Json -Depth 5
+            Set-Content -Path $signConfigPath -Value $signConfigJson -Encoding UTF8
+
             "PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-            "HAS_CERT=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "SIGN_SCRIPT_PATH=$signScript" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "SIGN_CONF_PATH=$signConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "tauri_args=$baseArgs --config `"$signConfigPath`"" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           } else {
-            Write-Host "WINDOWS_CERTIFICATE not set — building unsigned installer (placeholder secret mode)."
-            "HAS_CERT=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "WINDOWS_CERTIFICATE not set — building unsigned installers (placeholder secret mode)."
+            "tauri_args=$baseArgs" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
-      - name: Build Tauri NSIS + MSI + Updater artifacts
+      - name: Build, Authenticode-sign, Ed25519-sign & Publish NSIS + MSI + latest.json
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Tauri Ed25519 updater signing keys (generated via `npm run tauri signer generate`)
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # Tauri Ed25519 updater signing keys (generated via `npx @tauri-apps/cli signer generate`)
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: "GuideLens ${{ github.ref_name }}"
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "GuideLens ${{ inputs.tag || github.ref_name }}"
           releaseBody: |
-            ## GuideLens ${{ github.ref_name }} (Windows 10/11 x64)
+            ## GuideLens ${{ inputs.tag || github.ref_name }} (Windows 10/11 x64)
 
             ### Installers
             - **NSIS Setup (`.exe`)**: Per-user installer with automatic silent delta updates
@@ -108,28 +147,14 @@ jobs:
             - **Updater Manifest (`latest.json`)**: Ed25519-signed Tauri auto-updater feed
           releaseDraft: false
           prerelease: false
-          args: --target x86_64-pc-windows-msvc --bundles nsis,msi
+          args: ${{ steps.authenticode.outputs.tauri_args }}
 
-      - name: Authenticode sign installers with signtool.exe (when WINDOWS_CERTIFICATE is provided)
-        if: steps.authenticode.outputs.HAS_CERT == 'true'
-        env:
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
-            Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $signtool) {
-            Write-Error "signtool.exe not found in Windows SDK"
-            exit 1
-          }
-          $artifacts = Get-ChildItem -Path "apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -Recurse -Include *.exe,*.msi
-          foreach ($file in $artifacts) {
-            Write-Host "Signing $($file.FullName) with Authenticode SHA-256 + RFC3161 timestamp..."
-            & $signtool sign /f "$env:PFX_PATH" /p "$env:WINDOWS_CERTIFICATE_PASSWORD" /fd SHA256 /tr "http://timestamp.digicert.com" /td SHA256 "$($file.FullName)"
-          }
-
-      - name: Cleanup temporary PFX certificate
+      - name: Cleanup temporary signing files
         if: always()
         run: |
-          if ($env:PFX_PATH -and (Test-Path $env:PFX_PATH)) {
-            Remove-Item -Force $env:PFX_PATH
+          foreach ($varName in @("PFX_PATH", "SIGN_SCRIPT_PATH", "SIGN_CONF_PATH")) {
+            $p = [Environment]::GetEnvironmentVariable($varName)
+            if ($p -and (Test-Path $p)) {
+              Remove-Item -Force $p
+            }
           }

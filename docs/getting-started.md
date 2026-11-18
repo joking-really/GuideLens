@@ -58,7 +58,7 @@ npm run tauri dev
 ```
 
 ### What happens on startup:
-1. **SQLite WAL database** is initialized at `%LOCALAPPDATA%\GuideLens\guidelens.db` (with automatic pre-migration backups and 7-day screenshot capture pruning).
+1. **SQLite WAL database** is initialized at `%LOCALAPPDATA%\GuideLens\guidelens_local.db` (with automatic pre-migration backups and 7-day screenshot capture pruning).
 2. **Local Bridge HTTP Server** starts on `127.0.0.1:47615` (or the next free localhost port) and writes `%LOCALAPPDATA%\GuideLens\bridge.json` with a random 32-byte bearer token for `guidelens-mcp`.
 3. **Global Hotkey (`Ctrl + Space`)** is registered. Press `Ctrl + Space` at any time to summon or hide the floating 480×52 GuideLens command bar.
 4. **Click-Through Overlay Window** spans the virtual desktop (`WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`), rendering glowing bounding boxes, step badges, and an optional 2.5× magnifier lens without stealing focus from your active application.

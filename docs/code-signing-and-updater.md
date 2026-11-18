@@ -73,6 +73,5 @@ To prevent Windows Defender SmartScreen prompts on `.msi` and `.exe` installers:
 3. `.github/workflows/release.yml` will:
    - Run the IoU visual accuracy benchmark self-test (`benchmarks/run_benchmark.py --validate-only`).
    - Run `tsc`, `vitest`, `cargo clippy -- -D warnings`, and `cargo test`.
-   - Build both **NSIS (`*-setup.exe`)** and **MSI (`*.msi`)** bundles via `tauri-apps/tauri-action@v0`.
-   - Sign installers with `signtool.exe` (SHA-256 + DigiCert RFC3161 timestamp) when `WINDOWS_CERTIFICATE` is configured.
-   - Sign updater bundles with `TAURI_SIGNING_PRIVATE_KEY` and publish `latest.json` to GitHub Releases.
+   - When `WINDOWS_CERTIFICATE` is configured, inject `bundle.windows.signCommand` via a temporary `--config` JSON override so `signtool.exe` (SHA-256 + DigiCert RFC3161 timestamp) signs binaries and installers **during** `tauri build` before `.sig` updater signatures are generated.
+   - Build both **NSIS (`*-setup.exe`)** and **MSI (`*.msi`)** bundles via `tauri-apps/tauri-action@v0`, sign updater artifacts with `TAURI_SIGNING_PRIVATE_KEY`, and publish installers + `.sig` files + `latest.json` to GitHub Releases.
