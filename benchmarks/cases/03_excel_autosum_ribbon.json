@@ -1,0 +1,39 @@
+{
+  "id": "excel_autosum_ribbon_01",
+  "app": "excel",
+  "active_app_title": "Q4_Forecast.xlsx - Excel",
+  "query": "How do I quickly sum this column of numbers?",
+  "image_path": "images/excel_autosum_ribbon_01.png",
+  "screen_resolution": {
+    "width": 2560,
+    "height": 1440,
+    "scale_factor": 1.5
+  },
+  "expected": {
+    "mode": "guide",
+    "step_number": 1,
+    "target_name": "AutoSum",
+    "control_type": "Button",
+    "shortcut": "Alt+=",
+    "bbox": [842, 74, 52, 44],
+    "min_iou": 0.5
+  },
+  "mock_prediction": {
+    "mode": "guide",
+    "total_steps": 1,
+    "steps": [
+      {
+        "step_number": 1,
+        "instruction_line": "Click AutoSum in the Editing group on the top-right Home ribbon, or press Alt+=.",
+        "target_name": "AutoSum",
+        "control_type": "Button",
+        "bbox": [840, 76, 50, 42],
+        "confidence": 0.92,
+        "shortcut": "Alt+=",
+        "terminal_command": null,
+        "explanation": "Inserts a SUM formula for the contiguous cells above."
+      }
+    ]
+  },
+  "notes": "Synthetic 1440p @ 150% DPI reference layout for Microsoft Excel Home ribbon tab."
+}

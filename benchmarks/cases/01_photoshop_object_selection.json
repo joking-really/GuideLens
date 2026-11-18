@@ -1,0 +1,50 @@
+{
+  "id": "photoshop_object_selection_01",
+  "app": "photoshop",
+  "active_app_title": "portrait_edit.psd @ 66.7% (RGB/8) * - Adobe Photoshop 2025",
+  "query": "How do I cut out the subject from the background?",
+  "image_path": "images/photoshop_object_selection_01.png",
+  "screen_resolution": {
+    "width": 1920,
+    "height": 1080,
+    "scale_factor": 1.0
+  },
+  "expected": {
+    "mode": "guide",
+    "step_number": 1,
+    "target_name": "Object Selection Tool",
+    "control_type": "Button",
+    "shortcut": "W",
+    "bbox": [12, 185, 28, 32],
+    "min_iou": 0.5
+  },
+  "mock_prediction": {
+    "mode": "guide",
+    "total_steps": 2,
+    "steps": [
+      {
+        "step_number": 1,
+        "instruction_line": "Click the Object Selection Tool in the left toolbar, or press W.",
+        "target_name": "Object Selection Tool",
+        "control_type": "Button",
+        "bbox": [14, 187, 26, 30],
+        "confidence": 0.94,
+        "shortcut": "W",
+        "terminal_command": null,
+        "explanation": "Selects subjects automatically using on-device masking."
+      },
+      {
+        "step_number": 2,
+        "instruction_line": "Click 'Select Subject' in the top Options bar, then click the Add Layer Mask icon.",
+        "target_name": "Select Subject",
+        "control_type": "Button",
+        "bbox": [310, 42, 95, 24],
+        "confidence": 0.91,
+        "shortcut": null,
+        "terminal_command": null,
+        "explanation": "Isolates the subject non-destructively."
+      }
+    ]
+  },
+  "notes": "Synthetic 1080p @ 100% DPI reference layout for Photoshop dark workspace with single-column left tools panel."
+}

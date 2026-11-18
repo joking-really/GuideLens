@@ -1,0 +1,39 @@
+{
+  "id": "vscode_extensions_sidebar_01",
+  "app": "vscode",
+  "active_app_title": "main.rs - GuideLens - Visual Studio Code",
+  "query": "Where do I open Extensions to install rust-analyzer?",
+  "image_path": "images/vscode_extensions_sidebar_01.png",
+  "screen_resolution": {
+    "width": 1920,
+    "height": 1080,
+    "scale_factor": 1.25
+  },
+  "expected": {
+    "mode": "guide",
+    "step_number": 1,
+    "target_name": "Extensions (Ctrl+Shift+X)",
+    "control_type": "Button",
+    "shortcut": "Ctrl+Shift+X",
+    "bbox": [4, 260, 36, 48],
+    "min_iou": 0.5
+  },
+  "mock_prediction": {
+    "mode": "guide",
+    "total_steps": 1,
+    "steps": [
+      {
+        "step_number": 1,
+        "instruction_line": "Click the Extensions icon in the left Activity Bar, or press Ctrl+Shift+X.",
+        "target_name": "Extensions (Ctrl+Shift+X)",
+        "control_type": "Button",
+        "bbox": [5, 262, 34, 46],
+        "confidence": 0.96,
+        "shortcut": "Ctrl+Shift+X",
+        "terminal_command": null,
+        "explanation": "Opens the VS Code Extensions Marketplace sidebar."
+      }
+    ]
+  },
+  "notes": "Synthetic 1080p @ 125% DPI reference layout for VS Code default dark+ theme with Activity Bar on the far left."
+}

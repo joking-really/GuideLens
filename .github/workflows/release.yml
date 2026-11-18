@@ -1,0 +1,135 @@
+name: Release Windows Installer & Updater Manifest
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  NODE_VERSION: "20"
+
+jobs:
+  pre-release-checks:
+    name: Pre-release checks (CI + IoU benchmark validation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate benchmark cases & IoU harness
+        run: |
+          python benchmarks/run_benchmark.py --validate-only
+          python -m unittest discover -s benchmarks/tests -v
+
+  release-windows:
+    name: Build, Sign & Publish Windows (NSIS + MSI + latest.json)
+    needs: pre-release-checks
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: |
+          if (Test-Path package-lock.json) { npm ci } else { npm install }
+
+      - name: Run frontend + Rust tests before packaging
+        working-directory: apps/desktop
+        run: |
+          npx tsc --noEmit
+          npx vitest run
+          npm run build
+          Push-Location src-tauri
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+          Pop-Location
+
+      - name: Configure Windows Authenticode certificate (optional placeholder secrets)
+        id: authenticode
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE)) {
+            Write-Host "Decoding WINDOWS_CERTIFICATE into temporary PFX for Authenticode signing..."
+            $pfxPath = Join-Path $env:RUNNER_TEMP "guidelens-authenticode.pfx"
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            "PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "HAS_CERT=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            Write-Host "WINDOWS_CERTIFICATE not set — building unsigned installer (placeholder secret mode)."
+            "HAS_CERT=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Build Tauri NSIS + MSI + Updater artifacts
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tauri Ed25519 updater signing keys (generated via `npm run tauri signer generate`)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "GuideLens ${{ github.ref_name }}"
+          releaseBody: |
+            ## GuideLens ${{ github.ref_name }} (Windows 10/11 x64)
+
+            ### Installers
+            - **NSIS Setup (`.exe`)**: Per-user installer with automatic silent delta updates
+            - **MSI Package (`.msi`)**: Enterprise Windows Installer package
+            - **Updater Manifest (`latest.json`)**: Ed25519-signed Tauri auto-updater feed
+          releaseDraft: false
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc --bundles nsis,msi
+
+      - name: Authenticode sign installers with signtool.exe (when WINDOWS_CERTIFICATE is provided)
+        if: steps.authenticode.outputs.HAS_CERT == 'true'
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) {
+            Write-Error "signtool.exe not found in Windows SDK"
+            exit 1
+          }
+          $artifacts = Get-ChildItem -Path "apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -Recurse -Include *.exe,*.msi
+          foreach ($file in $artifacts) {
+            Write-Host "Signing $($file.FullName) with Authenticode SHA-256 + RFC3161 timestamp..."
+            & $signtool sign /f "$env:PFX_PATH" /p "$env:WINDOWS_CERTIFICATE_PASSWORD" /fd SHA256 /tr "http://timestamp.digicert.com" /td SHA256 "$($file.FullName)"
+          }
+
+      - name: Cleanup temporary PFX certificate
+        if: always()
+        run: |
+          if ($env:PFX_PATH -and (Test-Path $env:PFX_PATH)) {
+            Remove-Item -Force $env:PFX_PATH
+          }
