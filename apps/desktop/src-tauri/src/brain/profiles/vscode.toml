@@ -1,0 +1,46 @@
+id = "vscode"
+display_name = "Visual Studio Code"
+exe_patterns = ["code.exe", "code - insiders.exe", "cursor.exe"]
+title_patterns = ["visual studio code", " - vs code"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top title & Command Center bar (y: 0..35): File/Edit/Selection/View/Go/Run/Terminal/Help menu on left, search/command box in center, layout toggles (Toggle Panel, Primary/Secondary Side Bar) at top-right.",
+  "Far-left Activity Bar (x: 0..48, y: 35..970): Explorer (Ctrl+Shift+E), Search (Ctrl+Shift+F), Source Control (Ctrl+Shift+G), Run and Debug (Ctrl+Shift+D), Extensions (Ctrl+Shift+X), Accounts and Settings gear at bottom-left.",
+  "Primary Side Bar (x: 48..250, y: 35..970): File Explorer tree, Search results, Git changes, or Extensions list.",
+  "Editor groups (x: 250..1000, y: 35..680): open file tabs across top, breadcrumbs below tabs, code editor with line numbers and minimap.",
+  "Bottom Panel (x: 250..1000, y: 680..970): Problems, Output, Debug Console, Terminal (Ctrl+`). When integrated terminal is focused, terminal commands can be copied and pasted directly.",
+  "Bottom Status Bar (y: 970..1000): Git branch on left, Errors/Warnings, line/col, encoding, language mode, notifications on right."
+]
+
+[[shortcuts]]
+action = "Command Palette"
+keys = "Ctrl+Shift+P"
+
+[[shortcuts]]
+action = "Quick Open File by Name"
+keys = "Ctrl+P"
+
+[[shortcuts]]
+action = "Toggle Integrated Terminal"
+keys = "Ctrl+`"
+
+[[shortcuts]]
+action = "Open Settings"
+keys = "Ctrl+,"
+
+[[shortcuts]]
+action = "Global Search Across Files"
+keys = "Ctrl+Shift+F"
+
+[[shortcuts]]
+action = "Source Control / Git Panel"
+keys = "Ctrl+Shift+G"
+
+[[shortcuts]]
+action = "Quick Fix / Code Action"
+keys = "Ctrl+."
+
+[[shortcuts]]
+action = "Multi-cursor Add Next Occurrence"
+keys = "Ctrl+D"

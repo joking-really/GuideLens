@@ -1,0 +1,43 @@
+id = "powerpoint"
+display_name = "Microsoft PowerPoint"
+exe_patterns = ["powerpnt.exe", "powerpoint"]
+title_patterns = [" - powerpoint", "microsoft powerpoint"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top title bar & Search box (y: 0..35): Quick Access Toolbar on left, Tell Me / Search box in center, Share and Present buttons on top right.",
+  "Ribbon tabs (y: 35..65): File, Home, Insert, Draw, Design, Transitions, Animations, Slide Show, Record, Review, View, Help.",
+  "Ribbon commands (y: 65..155): New Slide, Layout, Shapes, Arrange, Quick Styles, Designer (far right of Home/Design tab).",
+  "Left Slide Thumbnail pane (x: 0..180, y: 155..940): vertical list of slide thumbnails in presentation order.",
+  "Center Slide Canvas (x: 190..820, y: 165..880): active slide workspace.",
+  "Right Format / Designer / Animations task pane (x: 820..1000, y: 155..940) when open.",
+  "Bottom status bar (y: 940..1000): Slide number, Notes toggle, Comments, Normal/Slide Sorter/Reading View/Slide Show icons, Zoom slider."
+]
+
+[[shortcuts]]
+action = "Insert New Slide"
+keys = "Ctrl+M"
+
+[[shortcuts]]
+action = "Duplicate Selected Slide or Object"
+keys = "Ctrl+D"
+
+[[shortcuts]]
+action = "Start Slide Show from Beginning"
+keys = "F5"
+
+[[shortcuts]]
+action = "Start Slide Show from Current Slide"
+keys = "Shift+F5"
+
+[[shortcuts]]
+action = "Group Selected Objects"
+keys = "Ctrl+G"
+
+[[shortcuts]]
+action = "Ungroup Objects"
+keys = "Ctrl+Shift+G"
+
+[[shortcuts]]
+action = "Open Selection Pane"
+keys = "Alt+F10"

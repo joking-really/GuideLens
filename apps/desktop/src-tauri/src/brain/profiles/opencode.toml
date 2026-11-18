@@ -1,0 +1,32 @@
+id = "opencode"
+display_name = "OpenCode"
+exe_patterns = ["opencode.exe", "opencode"]
+title_patterns = ["opencode"]
+terminal_mode = true
+
+ui_layout_hints = [
+  "OpenCode runs as an interactive terminal/TUI or desktop coding agent interface.",
+  "Center area displays conversation stream, tool executions, and file diffs.",
+  "Bottom prompt bar accepts natural-language coding instructions and slash commands (/init, /models, /compact, /share, /undo, /redo).",
+  "Prefer mode=\"terminal\" with a copy-ready command or slash command in terminal_command and a 1-line explanation."
+]
+
+[[shortcuts]]
+action = "Open Command / Action Palette"
+keys = "Ctrl+P"
+
+[[shortcuts]]
+action = "Switch AI Model"
+keys = "/models"
+
+[[shortcuts]]
+action = "Initialize Project Context (AGENTS.md)"
+keys = "/init"
+
+[[shortcuts]]
+action = "Compact Conversation History"
+keys = "/compact"
+
+[[shortcuts]]
+action = "Undo Last Agent Turn"
+keys = "/undo"

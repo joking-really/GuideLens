@@ -1,0 +1,57 @@
+id = "windows_terminal"
+display_name = "Windows Terminal / CLI"
+exe_patterns = [
+  "windowsterminal.exe",
+  "wt.exe",
+  "powershell.exe",
+  "pwsh.exe",
+  "cmd.exe",
+  "wsl.exe",
+  "conhost.exe",
+  "bash.exe",
+  "mintty.exe",
+  "alacritty.exe",
+  "wezterm-gui.exe"
+]
+title_patterns = [
+  "windows powershell",
+  "powershell",
+  "command prompt",
+  "windows terminal",
+  "mingw64",
+  "git bash"
+]
+terminal_mode = true
+
+ui_layout_hints = [
+  "Top tab strip (y: 0..42): open shell tabs, '+' button to open new tab, and 'v' chevron dropdown menu (Settings, Command Palette, profile picker).",
+  "Main terminal viewport (x: 0..1000, y: 42..1000): interactive shell prompt (PowerShell, CMD, WSL/Bash, Git CLI). Prefer mode=\"terminal\" with an exact copy-ready terminal_command and a concise 1-line explanation."
+]
+
+[[shortcuts]]
+action = "Open New Tab"
+keys = "Ctrl+Shift+T"
+
+[[shortcuts]]
+action = "Close Active Pane / Tab"
+keys = "Ctrl+Shift+W"
+
+[[shortcuts]]
+action = "Open Windows Terminal Settings"
+keys = "Ctrl+,"
+
+[[shortcuts]]
+action = "Command Palette"
+keys = "Ctrl+Shift+P"
+
+[[shortcuts]]
+action = "Duplicate Active Tab"
+keys = "Ctrl+Shift+D"
+
+[[shortcuts]]
+action = "Split Pane Vertically / Horizontally"
+keys = "Alt+Shift++ / Alt+Shift+-"
+
+[[shortcuts]]
+action = "Find in Terminal Output"
+keys = "Ctrl+Shift+F"

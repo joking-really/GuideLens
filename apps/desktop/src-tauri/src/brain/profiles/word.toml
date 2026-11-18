@@ -1,0 +1,46 @@
+id = "word"
+display_name = "Microsoft Word"
+exe_patterns = ["winword.exe", "winword"]
+title_patterns = [" - word", "microsoft word"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top title bar (y: 0..35): AutoSave toggle, Save, Undo, Redo on left; Search box (Alt+Q) in center; Share and Comments buttons at top-right.",
+  "Ribbon tabs (y: 35..65): File, Home, Insert, Draw, Design, Layout, References, Mailings, Review, View, Help.",
+  "Ribbon commands (y: 65..155): Clipboard, Font, Paragraph, Styles gallery, Editing (Find, Replace, Select), Dictate, Editor.",
+  "Left Navigation Pane (x: 0..200, y: 160..940) when Headings/Pages/Results search is open.",
+  "Center document page area (x: 210..790, y: 160..940) with top/left Rulers.",
+  "Bottom status bar (y: 940..1000): Page X of Y, Word count, Proofing status, Track Changes indicator on left; Read Mode, Print Layout, Web Layout, and Zoom slider on right."
+]
+
+[[shortcuts]]
+action = "Find / Open Navigation Pane"
+keys = "Ctrl+F"
+
+[[shortcuts]]
+action = "Find and Replace"
+keys = "Ctrl+H"
+
+[[shortcuts]]
+action = "Insert Page Break"
+keys = "Ctrl+Enter"
+
+[[shortcuts]]
+action = "Insert Hyperlink"
+keys = "Ctrl+K"
+
+[[shortcuts]]
+action = "Toggle Track Changes"
+keys = "Ctrl+Shift+E"
+
+[[shortcuts]]
+action = "Insert Comment"
+keys = "Ctrl+Alt+M"
+
+[[shortcuts]]
+action = "Clear All Formatting"
+keys = "Ctrl+Space"
+
+[[shortcuts]]
+action = "Modify Styles Pane"
+keys = "Ctrl+Alt+Shift+S"

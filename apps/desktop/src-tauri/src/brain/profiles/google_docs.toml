@@ -1,0 +1,42 @@
+id = "google_docs"
+display_name = "Google Docs"
+exe_patterns = ["google_docs"]
+title_patterns = [" - google docs", "google docs"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Browser tab & address bar occupy top ~80px (y: 0..80) when running inside Chrome/Edge.",
+  "Google Docs header (y: 80..135): Document title top-left, File, Edit, View, Insert, Format, Tools, Extensions, Help menus below title; Comments, Meet, Mode switcher (Editing / Suggesting / Viewing), and blue Share button at top-right (x: 860..985).",
+  "Formatting toolbar (y: 135..175): Search menus (Alt+/), Undo, Redo, Print, Paint format, Zoom, Styles dropdown (Normal text/Headings), Font family, Font size, Bold, Italic, Underline, Text color, Highlight color, Insert link, Add comment, Insert image, Alignment, Line spacing, Checklist, Bulleted/Numbered list, Clear formatting.",
+  "Left Document Outline & Document Tabs sidebar (x: 0..180, y: 180..950).",
+  "Center document page canvas (x: 220..780, y: 180..980).",
+  "Right Google Workspace side panel (x: 960..1000): Calendar, Keep, Tasks, Contacts."
+]
+
+[[shortcuts]]
+action = "Search the Menus (Tool Finder)"
+keys = "Alt+/"
+
+[[shortcuts]]
+action = "Insert Link"
+keys = "Ctrl+K"
+
+[[shortcuts]]
+action = "Add Comment"
+keys = "Ctrl+Alt+M"
+
+[[shortcuts]]
+action = "Word Count"
+keys = "Ctrl+Shift+C"
+
+[[shortcuts]]
+action = "Paste Without Formatting"
+keys = "Ctrl+Shift+V"
+
+[[shortcuts]]
+action = "Clear Formatting"
+keys = "Ctrl+\\"
+
+[[shortcuts]]
+action = "Apply Heading 1 / 2 / 3"
+keys = "Ctrl+Alt+1 / 2 / 3"

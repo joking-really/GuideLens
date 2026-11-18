@@ -1,0 +1,50 @@
+id = "premiere_pro"
+display_name = "Adobe Premiere Pro"
+exe_patterns = ["adobe premiere pro.exe", "premiere"]
+title_patterns = ["adobe premiere pro", "premiere pro"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top menu bar & workspace header (y: 0..55): Import, Edit, Export tabs at top-left; Workspaces dropdown (Editing, Color, Effects, Audio, Captions and Graphics) at top-right.",
+  "Top-left panel (x: 0..460, y: 55..530): Source Monitor, Effect Controls (Motion, Opacity, Time Remapping, Keyframes), Audio Clip Mixer, Text / Transcript.",
+  "Top-right panel (x: 460..1000, y: 55..530): Program Monitor (active timeline preview with transport buttons Play/Step/Mark In/Mark Out/Export Frame).",
+  "Bottom-left panel (x: 0..310, y: 530..1000): Project media bin, Media Browser, Effects panel (Video Transitions, Video Effects, Audio Effects, Lumetri Presets).",
+  "Center narrow vertical tool strip (x: 310..345, y: 530..1000): Selection (V), Track Select Forward (A), Ripple Edit (B), Razor (C), Slip (Y), Pen (P), Hand (H), Type (T).",
+  "Bottom-right Timeline panel (x: 345..1000, y: 530..1000): Video tracks V1/V2/V3 above and Audio tracks A1/A2/A3 below with playhead, Snap magnet (S), Linked Selection."
+]
+
+[[shortcuts]]
+action = "Selection Tool"
+keys = "V"
+
+[[shortcuts]]
+action = "Razor / Cut Tool"
+keys = "C"
+
+[[shortcuts]]
+action = "Add Edit (Cut at Playhead)"
+keys = "Ctrl+K"
+
+[[shortcuts]]
+action = "Ripple Delete Selected Gap/Clip"
+keys = "Shift+Delete"
+
+[[shortcuts]]
+action = "Mark In / Mark Out"
+keys = "I / O"
+
+[[shortcuts]]
+action = "Apply Default Video Transition"
+keys = "Ctrl+D"
+
+[[shortcuts]]
+action = "Apply Default Audio Transition"
+keys = "Ctrl+Shift+D"
+
+[[shortcuts]]
+action = "Speed / Duration Dialog"
+keys = "Ctrl+R"
+
+[[shortcuts]]
+action = "Export Media"
+keys = "Ctrl+M"

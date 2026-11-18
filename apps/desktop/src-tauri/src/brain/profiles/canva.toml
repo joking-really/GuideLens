@@ -1,0 +1,50 @@
+id = "canva"
+display_name = "Canva"
+exe_patterns = ["canva.exe", "canva"]
+title_patterns = ["canva"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top navigation header (y: 0..60 in desktop app, y: 80..135 in browser): Home, File, Magic Switch / Resize, Undo/Redo on left; design title, Present, and Share (Download / Export) button at top-right (x: 880..990).",
+  "Far-left vertical object dock (x: 0..55, y: 60..950): Design (Templates), Elements (Shapes, Graphics, Photos, Videos), Text, Brand, Uploads, Draw, Projects, Apps, Magic Media.",
+  "Collapsible side drawer (x: 55..280, y: 60..950): search bar and assets for the active left-dock tab.",
+  "Contextual top action toolbar above canvas (x: 280..990, y: 60..105): Edit Image / BG Remover, Font, Size, Color, Effects, Animate, Position (Layers/Align), Transparency, Lock.",
+  "Center design canvas (x: 300..950, y: 110..910).",
+  "Bottom bar (y: 910..1000): Notes, Duration/Timer, Page thumbnail strip (+ Add page), Grid View, Zoom slider."
+]
+
+[[shortcuts]]
+action = "Quick Actions / Magic Command Palette"
+keys = "Ctrl+E"
+
+[[shortcuts]]
+action = "Add Text Box"
+keys = "T"
+
+[[shortcuts]]
+action = "Add Rectangle"
+keys = "R"
+
+[[shortcuts]]
+action = "Add Circle"
+keys = "C"
+
+[[shortcuts]]
+action = "Add Line"
+keys = "L"
+
+[[shortcuts]]
+action = "Group Elements"
+keys = "Ctrl+G"
+
+[[shortcuts]]
+action = "Ungroup Elements"
+keys = "Ctrl+Shift+G"
+
+[[shortcuts]]
+action = "Duplicate Selected Element"
+keys = "Ctrl+D"
+
+[[shortcuts]]
+action = "Bring Forward / Send Backward"
+keys = "Ctrl+] / Ctrl+["

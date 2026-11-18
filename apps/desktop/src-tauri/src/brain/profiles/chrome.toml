@@ -1,0 +1,44 @@
+id = "chrome"
+display_name = "Google Chrome"
+exe_patterns = ["chrome.exe", "msedge.exe", "brave.exe"]
+title_patterns = [" - google chrome", "google chrome"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top tab strip (y: 0..42): tab search chevron at top-left, open browser tabs, '+' New Tab button, window controls at top-right.",
+  "Navigation & Omnibox bar (y: 42..82): Back, Forward, Reload buttons on left (x: 0..105); Address / Search bar (Omnibox, x: 110..780); Bookmark star, Extensions puzzle icon, Profile avatar, and Three-dot Customize/Control menu (⋮) at top-right (x: 965..995).",
+  "Optional Bookmarks bar (y: 82..112).",
+  "Web page viewport (x: 0..1000, y: 82..1000), or split with Chrome DevTools dock on right/bottom when inspecting."
+]
+
+[[shortcuts]]
+action = "Focus Address Bar (Omnibox)"
+keys = "Ctrl+L"
+
+[[shortcuts]]
+action = "Open New Tab"
+keys = "Ctrl+T"
+
+[[shortcuts]]
+action = "Reopen Closed Tab"
+keys = "Ctrl+Shift+T"
+
+[[shortcuts]]
+action = "Open Chrome DevTools"
+keys = "Ctrl+Shift+I / F12"
+
+[[shortcuts]]
+action = "Clear Browsing Data"
+keys = "Ctrl+Shift+Delete"
+
+[[shortcuts]]
+action = "Open Downloads"
+keys = "Ctrl+J"
+
+[[shortcuts]]
+action = "Open History"
+keys = "Ctrl+H"
+
+[[shortcuts]]
+action = "Find on Page"
+keys = "Ctrl+F"

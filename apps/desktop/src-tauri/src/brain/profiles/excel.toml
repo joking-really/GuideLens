@@ -1,0 +1,46 @@
+id = "excel"
+display_name = "Microsoft Excel"
+exe_patterns = ["excel.exe", "excel"]
+title_patterns = [" - excel", "microsoft excel"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top title bar & Quick Access Toolbar (y: 0..35): Save, Undo, Redo, Search box (Alt+Q) at top center.",
+  "Ribbon tabs (y: 35..65): File, Home, Insert, Page Layout, Formulas, Data, Review, View, Automate, Help.",
+  "Ribbon command groups (y: 65..155): Clipboard, Font, Alignment, Number, Styles (Conditional Formatting), Cells, Editing (AutoSum, Sort & Filter, Find & Select).",
+  "Name Box (x: 0..95, y: 155..185) on far left and Formula Bar (fx, x: 130..1000, y: 155..185) on right.",
+  "Worksheet grid (y: 185..930) with column headers A..Z and row numbers 1..N.",
+  "Bottom status & sheet bar (y: 930..1000): Sheet tabs on left (+ to add sheet), Sum/Average/Count summary and Zoom slider on right."
+]
+
+[[shortcuts]]
+action = "Insert Function / Formula Builder"
+keys = "Shift+F3"
+
+[[shortcuts]]
+action = "AutoSum selected cells"
+keys = "Alt+="
+
+[[shortcuts]]
+action = "Create Table from range"
+keys = "Ctrl+T"
+
+[[shortcuts]]
+action = "Toggle Filter on/off"
+keys = "Ctrl+Shift+L"
+
+[[shortcuts]]
+action = "Format Cells dialog"
+keys = "Ctrl+1"
+
+[[shortcuts]]
+action = "Toggle Absolute/Relative Reference ($A$1)"
+keys = "F4"
+
+[[shortcuts]]
+action = "Flash Fill"
+keys = "Ctrl+E"
+
+[[shortcuts]]
+action = "Insert PivotTable"
+keys = "Alt+N, V"

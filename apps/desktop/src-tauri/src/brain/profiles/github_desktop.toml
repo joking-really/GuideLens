@@ -1,0 +1,44 @@
+id = "github_desktop"
+display_name = "GitHub Desktop"
+exe_patterns = ["githubdesktop.exe", "github desktop"]
+title_patterns = ["github desktop"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top menu bar (y: 0..30): File, Edit, View, Repository, Branch, Help.",
+  "Repository header bar (y: 30..85): Current Repository selector (x: 0..250), Current Branch selector (x: 250..500), and Fetch origin / Push origin / Pull origin button (x: 500..750).",
+  "Left sidebar (x: 0..260, y: 85..1000): Changes tab and History tab at top; list of changed files with checkboxes in middle; Commit summary input, description textarea, and blue 'Commit to <branch>' button at bottom-left (x: 10..250, y: 780..980).",
+  "Main right pane (x: 260..1000, y: 85..1000): file diff view when Changes or History commit is selected, or quick action cards ('Push commits to the origin remote', 'Open the repository in your external editor', 'Preview Pull Request', 'View on GitHub') when working tree is clean."
+]
+
+[[shortcuts]]
+action = "Switch Repository"
+keys = "Ctrl+T"
+
+[[shortcuts]]
+action = "Switch / Create Branch"
+keys = "Ctrl+B"
+
+[[shortcuts]]
+action = "Create New Branch"
+keys = "Ctrl+Shift+N"
+
+[[shortcuts]]
+action = "Push to Origin"
+keys = "Ctrl+P"
+
+[[shortcuts]]
+action = "Pull from Origin"
+keys = "Ctrl+Shift+P"
+
+[[shortcuts]]
+action = "Open in External Editor"
+keys = "Ctrl+Shift+A"
+
+[[shortcuts]]
+action = "Open in Terminal / Command Prompt"
+keys = "Ctrl+`"
+
+[[shortcuts]]
+action = "Create Pull Request"
+keys = "Ctrl+R"

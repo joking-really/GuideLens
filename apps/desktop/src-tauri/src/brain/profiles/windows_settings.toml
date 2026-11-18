@@ -1,0 +1,30 @@
+id = "windows_settings"
+display_name = "Windows Settings"
+exe_patterns = ["systemsettings.exe"]
+title_patterns = ["settings"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Left navigation rail (x: 0..240, y: 50..1000): user account header at top, 'Find a setting' search box (x: 15..225, y: 120..165), and category list below: System, Bluetooth & devices, Network & internet, Personalization, Apps, Accounts, Time & language, Gaming, Accessibility, Privacy & security, Windows Update.",
+  "Main right content pane (x: 250..1000, y: 50..1000): breadcrumb title at top (e.g. 'System > Display'), followed by vertically stacked setting cards with toggle switches, dropdowns, and '>' chevron rows that drill into sub-pages."
+]
+
+[[shortcuts]]
+action = "Open Windows Settings"
+keys = "Win+I"
+
+[[shortcuts]]
+action = "Focus 'Find a setting' Search Box"
+keys = "Ctrl+F"
+
+[[shortcuts]]
+action = "Navigate Back to Previous Settings Page"
+keys = "Alt+Left"
+
+[[shortcuts]]
+action = "Open Quick Settings Flyout"
+keys = "Win+A"
+
+[[shortcuts]]
+action = "Open Display / Projection Mode"
+keys = "Win+P"

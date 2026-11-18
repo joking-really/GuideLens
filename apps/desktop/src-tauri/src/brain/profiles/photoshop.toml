@@ -1,0 +1,61 @@
+id = "photoshop"
+display_name = "Adobe Photoshop"
+exe_patterns = ["photoshop.exe", "photoshop"]
+title_patterns = ["adobe photoshop", "@ "]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top menu bar (y: 0..35): File, Edit, Image, Layer, Type, Select, Filter, View, Plugins, Window, Help.",
+  "Options bar below menu bar (y: 35..75): tool presets, mode, opacity, flow, Select Subject, Select and Mask.",
+  "Left vertical toolbar (x: 0..48, y: 75..880): Move (V), Rectangular Marquee (M), Lasso (L), Object Selection / Quick Selection / Magic Wand (W), Crop (C), Frame (K), Eyedropper (I), Spot Healing Brush (J), Brush (B), Clone Stamp (S), History Brush (Y), Eraser (E), Gradient / Paint Bucket (G), Blur, Dodge (O), Pen (P), Horizontal Type (T), Path Selection (A), Shape (U), Hand (H), Zoom (Z), Foreground/Background color swatches (D/X), Quick Mask (Q).",
+  "Right dock panels (x: 750..1000, y: 75..960): Layers, Channels, Paths, Properties, Adjustments. Bottom of Layers panel has Link, Layer Style (fx), Add Layer Mask, New Adjustment Layer, New Group, New Layer (+), Delete Layer (trash).",
+  "Contextual Task Bar often floats near active selection with Generative Fill, Select Subject, Remove Background."
+]
+
+[[shortcuts]]
+action = "Move Tool"
+keys = "V"
+
+[[shortcuts]]
+action = "Object Selection / Quick Selection / Magic Wand"
+keys = "W"
+
+[[shortcuts]]
+action = "Brush Tool"
+keys = "B"
+
+[[shortcuts]]
+action = "Horizontal Type Tool"
+keys = "T"
+
+[[shortcuts]]
+action = "Free Transform"
+keys = "Ctrl+T"
+
+[[shortcuts]]
+action = "New Layer"
+keys = "Ctrl+Shift+N"
+
+[[shortcuts]]
+action = "Duplicate Layer"
+keys = "Ctrl+J"
+
+[[shortcuts]]
+action = "Deselect"
+keys = "Ctrl+D"
+
+[[shortcuts]]
+action = "Invert Selection"
+keys = "Ctrl+Shift+I"
+
+[[shortcuts]]
+action = "Curves Adjustment"
+keys = "Ctrl+M"
+
+[[shortcuts]]
+action = "Levels Adjustment"
+keys = "Ctrl+L"
+
+[[shortcuts]]
+action = "Quick Export / Save for Web"
+keys = "Ctrl+Shift+Alt+W"

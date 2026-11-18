@@ -1,0 +1,37 @@
+id = "antigravity"
+display_name = "Antigravity"
+exe_patterns = ["antigravity.exe", "agy.exe", "agy"]
+title_patterns = ["antigravity"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top title & Command Center bar (y: 0..35): menus on left, file/workspace search in center, Agent Manager / Editor pane toggles at top-right.",
+  "Left Activity Bar (x: 0..48, y: 35..970) and File Explorer / Agent Sessions sidebar (x: 48..250, y: 35..970).",
+  "Center Editor & Artifact Viewer (x: 250..680, y: 35..970): code tabs, implementation plan artifacts, and integrated terminal panel at bottom.",
+  "Right Agent Chat & Task Pane (x: 680..1000, y: 35..970): conversation history, active tool steps, model selector, and prompt input box at bottom-right (supports /plan, /goal, /compact, /learn, @file mentions).",
+  "If the user asks for an agy CLI or terminal command, use mode=\"terminal\" and populate terminal_command."
+]
+
+[[shortcuts]]
+action = "Toggle Agent Chat Side Pane"
+keys = "Ctrl+L"
+
+[[shortcuts]]
+action = "Command Palette"
+keys = "Ctrl+Shift+P"
+
+[[shortcuts]]
+action = "Quick Open File"
+keys = "Ctrl+P"
+
+[[shortcuts]]
+action = "Toggle Integrated Terminal"
+keys = "Ctrl+`"
+
+[[shortcuts]]
+action = "Start Step-by-Step Plan Mode"
+keys = "/plan"
+
+[[shortcuts]]
+action = "Compact Context Window"
+keys = "/compact"

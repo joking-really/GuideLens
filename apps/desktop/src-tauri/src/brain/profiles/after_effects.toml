@@ -1,0 +1,50 @@
+id = "after_effects"
+display_name = "Adobe After Effects"
+exe_patterns = ["afterfx.exe", "after effects"]
+title_patterns = ["adobe after effects", "after effects"]
+terminal_mode = false
+
+ui_layout_hints = [
+  "Top menu bar (y: 0..30): File, Edit, Composition, Layer, Effect, Animation, View, Window, Help.",
+  "Top tool bar (y: 30..65): Selection (V), Hand (H), Zoom (Z), Rotation (W), Pan Behind / Anchor Point (Y), Rectangle/Shape (Q), Pen (G), Type (Ctrl+T), Brush/Clone/Eraser, Roto Brush, Puppet Pin.",
+  "Left Project & Effect Controls panel (x: 0..240, y: 65..560): Project assets tree and Effect Controls tab.",
+  "Center Composition Viewer (x: 240..780, y: 65..560): active composition preview, magnification dropdown, Mask/Shape Path visibility, Active Camera, Region of Interest.",
+  "Right dock panels (x: 780..1000, y: 65..1000): Info, Audio, Preview, Effects & Presets (search bar), Align, Character, Paragraph, Tracker.",
+  "Bottom Timeline & Layer stack (x: 0..780, y: 560..1000): Layer switches (Shy, Motion Blur, Adjustment Layer, 3D Layer, Parent & Link pick whip) on left (x: 0..360) and keyframe timeline / Graph Editor on right (x: 360..780)."
+]
+
+[[shortcuts]]
+action = "Reveal Position / Scale / Rotation / Opacity"
+keys = "P / S / R / T"
+
+[[shortcuts]]
+action = "Reveal All Animated Keyframes on Layer"
+keys = "U"
+
+[[shortcuts]]
+action = "Easy Ease Selected Keyframes"
+keys = "F9"
+
+[[shortcuts]]
+action = "Split Layer at Playhead"
+keys = "Ctrl+Shift+D"
+
+[[shortcuts]]
+action = "Pre-compose Selected Layers"
+keys = "Ctrl+Shift+C"
+
+[[shortcuts]]
+action = "Composition Settings"
+keys = "Ctrl+K"
+
+[[shortcuts]]
+action = "New Solid Layer"
+keys = "Ctrl+Y"
+
+[[shortcuts]]
+action = "Center Anchor Point in Layer Content"
+keys = "Ctrl+Alt+Home"
+
+[[shortcuts]]
+action = "Add to Render Queue"
+keys = "Ctrl+Alt+M"
