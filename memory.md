@@ -79,3 +79,13 @@
   - `python -m unittest discover -s benchmarks/tests -v` → 7/7 passed (`OK`).
   - `@verifier-services` confirmed `release` passes (#23).
 - **Next Pending Step:** Continue monitoring board for completed worker summaries (`mcp`, `cloud`, `core`, `brains`, `frontend`) and update `memory.md` ledger & milestone checklist.
+
+### [2026-11-19 00:57] — Agent: brains (commit `02c360a`)
+- **Task:** Multi-brain Rust router, providers (Ollama, BYO API + Windows Credential Manager keyring, headless Agent CLIs, Groq Pro), JSON repair, 15 Windows app profiles, and hybrid Windows UIA target locator.
+- **Status:** Code Complete (Pending `cargo clippy` / `cargo test` — awaiting `@core` rustup setup & VS 2022 Build Tools MSVC linker)
+- **Files Created / Modified:**
+  - `apps/desktop/src-tauri/src/brain/` (`mod.rs`, `commands.rs`, `router.rs`, `provider.rs`, `ollama.rs`, `byo_api.rs`, `agent_cli.rs`, `groq_pro.rs`, `secrets.rs`, `json_repair.rs`, `prompts.rs`, `profiles/*.toml` — 15 priority app profiles) — `BrainState`, 12 Tauri IPC commands (`ask`, `set_api_key`, `delete_api_key`, `list_api_key_providers`, `ollama_status`, `ollama_pull`, `detect_agents`, `auth_login`, `auth_logout`, `auth_status`, `billing_checkout`, `transcribe`), priority routing, graceful fallbacks, `<=140`-char & `<0.5`-confidence clamping.
+  - `apps/desktop/src-tauri/src/locator/` (`mod.rs`, `uia.rs`) — Bounded 150ms `IUIAutomation` BFS + `strsim::jaro_winkler` + UIA/VLM fusion (`source: uia|vlm|none`).
+- **Architectural / Schema Changes:** None (wired into `lib.rs` by `@core` in #20 per #11/#12/#15).
+- **Verification / Test Results:** Unit tests (`wiremock` + mock stores/CLIs) written in 9 modules; `cargo clippy -- -D warnings` & `cargo test` not yet run (blocked on `rustup` + MSVC Build Tools per #20/#22/#31).
+- **Next Pending Step:** Run `cargo clippy -- -D warnings` and `cargo test` once `@core` completes toolchain setup / MSVC Build Tools are available; verify via `@verifier-desktop`.
