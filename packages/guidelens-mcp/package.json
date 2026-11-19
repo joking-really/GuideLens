@@ -1,0 +1,37 @@
+{
+  "name": "guidelens-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (MCP) server and CLI bridge for GuideLens Windows AI on-screen copilot",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "guidelens": "./dist/cli.js",
+    "guidelens-mcp": "./dist/mcp-bin.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node ./dist/mcp-bin.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.8.2",
+    "vitest": "^3.2.0"
+  },
+  "license": "MIT"
+}
