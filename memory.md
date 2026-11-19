@@ -89,3 +89,18 @@
 - **Architectural / Schema Changes:** None (wired into `lib.rs` by `@core` in #20 per #11/#12/#15).
 - **Verification / Test Results:** Unit tests (`wiremock` + mock stores/CLIs) written in 9 modules; `cargo clippy -- -D warnings` & `cargo test` not yet run (blocked on `rustup` + MSVC Build Tools per #20/#22/#31).
 - **Next Pending Step:** Run `cargo clippy -- -D warnings` and `cargo test` once `@core` completes toolchain setup / MSVC Build Tools are available; verify via `@verifier-desktop`.
+
+### [2026-11-19 01:02] — Agent: cloud (commit `9afb547`)
+- **Task:** Stateless FastAPI Cloud Proxy (`services/cloud`), Supabase PostgreSQL schema & RLS migration, Groq Vision/Reasoning service, fair-use quota/rate limiter, Stripe Checkout/Portal/Webhook billing, Dockerfile, and pytest suite.
+- **Status:** Completed (Pending `@verifier-services` verification)
+- **Files Created / Modified:**
+  - `services/cloud/supabase/migrations/20261118000000_init_cloud_schema.sql` — `public.profiles`, `public.usage_logs`, RLS policies (`authenticated` SELECT own + `service_role` ALL), `on_auth_user_created` trigger (`handle_new_user`), atomic `increment_usage(user_id, month)` RPC.
+  - `services/cloud/app/` (`main.py`, `config.py`, `schemas.py`, `auth.py`, `rate_limit.py`, `supabase_client.py`, `groq_service.py`, `stripe_service.py`) — HS256/JWKS JWT verification, Pro entitlement (`402`), 1,500/mo quota + 20 req/min per-user/IP sliding-window limiter (`429 {error, detail, retry_after}`), Groq Vision + Reasoning JSON repair (`504` timeout, `image_base64` `repr=False` strictly in-memory), Stripe Checkout/Portal/Webhooks, and `GET /api/v1/me`.
+  - `services/cloud/tests/` + `.env.example`, `.gitignore`, `Dockerfile`, `pyproject.toml`, `requirements.txt`, `README.md`.
+- **Architectural / Schema Changes:** None (matches `decisions.md` §3, §6 and `database.md` §3–4).
+- **Verification / Test Results:**
+  - `python -m ruff check .` → `All checks passed!`
+  - `python -m ruff format --check .` → `13 files already formatted`
+  - `python -m pytest -v` → `28 passed in 1.09s`
+  - Live `uvicorn app.main:app --host 127.0.0.1 --port 18765` smoke test (`/health` 200, free `/api/v1/guide` 402, signed webhook 200, Pro `/api/v1/guide` 200, `/api/v1/me` `usage: 1`) → `UVICORN SMOKE TEST PASSED`.
+- **Next Pending Step:** `@verifier-services` to verify `services/cloud` (`9afb547`) independently; `@mcp`, `@core`, `@frontend` to complete builds/tests.
