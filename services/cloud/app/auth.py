@@ -48,19 +48,36 @@ class JWTVerifier:
                 detail={"error": "invalid_token", "message": f"Malformed JWT header: {exc}"},
             ) from exc
 
-        alg = header.get("alg", "HS256")
+        alg = header.get("alg")
+        decode_kwargs: dict[str, Any] = {}
+        audience = self.settings.supabase_jwt_audience.strip()
+        if audience:
+            decode_kwargs["audience"] = audience
+        else:
+            decode_kwargs["options"] = {"verify_aud": False}
 
         try:
-            if alg in ("RS256", "ES256") and self._jwks_client is not None:
+            if self._jwks_client is not None:
+                # When JWKS is configured, enforce asymmetric algorithms only to prevent
+                # HS256 algorithm-confusion / JWKS bypass attacks.
+                if alg not in ("RS256", "ES256"):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "error": "unsupported_jwt_algorithm",
+                            "message": f"JWKS mode rejects JWT algorithm: {alg}",
+                        },
+                    )
                 signing_key = self._jwks_client.get_signing_key_from_jwt(token).key
                 claims = jwt.decode(
                     token,
                     signing_key,
                     algorithms=["RS256", "ES256"],
-                    options={"verify_aud": False},
+                    **decode_kwargs,
                 )
             elif alg == "HS256":
-                if not self.settings.supabase_jwt_secret:
+                jwt_secret = self.settings.supabase_jwt_secret.strip()
+                if not jwt_secret or jwt_secret == "your-supabase-jwt-secret-min-32-chars":
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail={
@@ -70,9 +87,9 @@ class JWTVerifier:
                     )
                 claims = jwt.decode(
                     token,
-                    self.settings.supabase_jwt_secret,
+                    jwt_secret,
                     algorithms=["HS256"],
-                    options={"verify_aud": False},
+                    **decode_kwargs,
                 )
             else:
                 raise HTTPException(

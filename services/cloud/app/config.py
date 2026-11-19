@@ -45,7 +45,7 @@ class Settings(BaseModel):
     # Supabase
     supabase_url: str = Field(default="")
     supabase_service_role_key: str = Field(default="")
-    supabase_jwt_secret: str = Field(default="dev-mock-supabase-jwt-secret-min-32-bytes")
+    supabase_jwt_secret: str = Field(default="")
     supabase_jwks_url: str = Field(default="")
     supabase_jwt_audience: str = Field(default="authenticated")
 

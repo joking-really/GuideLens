@@ -11,6 +11,7 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -113,7 +114,12 @@ def test_jwks_rs256_verification(test_settings: Settings) -> None:
     verifier._jwks_client.get_signing_key_from_jwt = MagicMock(return_value=fake_signing_key)
 
     rs256_token = jwt.encode(
-        {"sub": "user-rs256", "email": "rs256@guidelens.app", "role": "authenticated"},
+        {
+            "sub": "user-rs256",
+            "email": "rs256@guidelens.app",
+            "role": "authenticated",
+            "aud": "authenticated",
+        },
         private_key,
         algorithm="RS256",
     )
@@ -781,3 +787,108 @@ async def test_groq_http_client_repairs_via_reasoning_model_and_maps_timeouts(
         groq_timeout = GroqHttpClient(test_settings, http_client=timeout_client)
         with pytest.raises(GroqTimeoutError):
             await groq_timeout.generate_step_plan(GuideRequest.model_validate(SAMPLE_GUIDE_BODY))
+
+
+# ============================================================================
+# 9. Security Hardening Regression Tests (Findings #39)
+# ============================================================================
+def test_jwt_fails_closed_when_secret_unset_or_placeholder(
+    test_settings: Settings,
+    supabase_store: InMemorySupabaseStore,
+    rate_limiter: InMemoryRateLimiter,
+) -> None:
+    # Default Settings() must have empty supabase_jwt_secret (no hardcoded dev secret)
+    assert Settings().supabase_jwt_secret == ""
+
+    for bad_secret_cfg in ("", "   ", "your-supabase-jwt-secret-min-32-chars"):
+        cfg = test_settings.model_copy(update={"supabase_jwt_secret": bad_secret_cfg})
+        unconfigured_client = TestClient(
+            create_app(
+                settings=cfg,
+                supabase_store=supabase_store,
+                rate_limiter=rate_limiter,
+            )
+        )
+        forged = make_jwt(
+            secret=bad_secret_cfg.strip() or "dev-mock-supabase-jwt-secret-min-32-bytes"
+        )
+        resp = unconfigured_client.post(
+            "/api/v1/guide",
+            headers={"Authorization": f"Bearer {forged}"},
+            json=SAMPLE_GUIDE_BODY,
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"]["error"] == "jwt_secret_not_configured"
+
+
+def test_jwks_mode_rejects_hs256_algorithm_confusion_and_checks_audience(
+    test_settings: Settings,
+) -> None:
+    jwks_url = "https://example.supabase.co/auth/v1/.well-known/jwks.json"
+    cfg = test_settings.model_copy(update={"supabase_jwks_url": jwks_url})
+    verifier = JWTVerifier(cfg)
+
+    # Even if attacker signs an HS256 token with test_settings.supabase_jwt_secret,
+    # JWKS mode must reject HS256 to prevent algorithm confusion / JWKS bypass.
+    hs256_token = make_jwt(secret=test_settings.supabase_jwt_secret)
+    with pytest.raises(HTTPException) as exc_info:
+        verifier.verify_token(hs256_token)
+    assert exc_info.value.status_code == 401
+
+    # Wrong audience must also be rejected when supabase_jwt_audience is set
+    wrong_aud_token = make_jwt(extra_claims={"aud": "wrong-audience"})
+    hs_verifier = JWTVerifier(test_settings)
+    with pytest.raises(HTTPException) as aud_exc:
+        hs_verifier.verify_token(wrong_aud_token)
+    assert aud_exc.value.status_code == 401
+
+
+def test_stripe_webhook_fails_closed_when_secret_unset_or_placeholder(
+    test_settings: Settings,
+    supabase_store: InMemorySupabaseStore,
+    rate_limiter: InMemoryRateLimiter,
+) -> None:
+    payload = encode_webhook_event({"id": "evt_forged", "type": "checkout.session.completed"})
+    for bad_wh_secret in ("", "whsec_your_stripe_webhook_secret"):
+        cfg = test_settings.model_copy(update={"stripe_webhook_secret": bad_wh_secret})
+        unconfigured_client = TestClient(
+            create_app(
+                settings=cfg,
+                supabase_store=supabase_store,
+                rate_limiter=rate_limiter,
+            )
+        )
+        forged_sig = generate_stripe_signature(
+            payload,
+            secret=bad_wh_secret or "whsec_dev_mock_webhook_secret",
+        )
+        resp = unconfigured_client.post(
+            "/webhooks/stripe",
+            content=payload,
+            headers={"Stripe-Signature": forged_sig},
+        )
+        assert resp.status_code == 500
+        assert resp.json()["detail"]["error"] == "webhook_secret_not_configured"
+
+
+def test_billing_checkout_whitelists_price_id(client: TestClient) -> None:
+    token = make_jwt()
+
+    # Allowed price_ids succeed
+    for allowed_price in (TEST_PRICE_MONTHLY, TEST_PRICE_ANNUAL):
+        ok_resp = client.post(
+            "/billing/checkout",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"price_id": allowed_price},
+        )
+        assert ok_resp.status_code == 200
+        assert allowed_price in ok_resp.json()["url"]
+
+    # Arbitrary price_id is rejected with 400
+    bad_resp = client.post(
+        "/billing/checkout",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"price_id": "price_attacker_free_0_usd"},
+    )
+    assert bad_resp.status_code == 400
+    assert bad_resp.json()["detail"]["error"] == "invalid_price_id"

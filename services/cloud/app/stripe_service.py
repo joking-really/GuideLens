@@ -60,10 +60,18 @@ class StripeService:
 
     def resolve_price_and_tier(self, req: CheckoutRequest) -> tuple[str, SubscriptionTier]:
         """Resolve Stripe price ID ($19/mo or $190/yr) and corresponding tier name."""
-        if req.price_id:
+        if req.price_id is not None:
             if req.price_id == self.settings.stripe_price_annual:
                 return req.price_id, "pro_annual"
-            return req.price_id, "pro_monthly"
+            if req.price_id == self.settings.stripe_price_monthly:
+                return req.price_id, "pro_monthly"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "invalid_price_id",
+                    "message": "Provided price_id is not an allowed GuideLens Pro plan.",
+                },
+            )
 
         if req.plan in ("annual", "pro_annual"):
             return self.settings.stripe_price_annual, "pro_annual"
@@ -148,9 +156,15 @@ class StripeService:
                 },
             )
 
-        webhook_secret = (
-            self.settings.stripe_webhook_secret.strip() or "whsec_dev_mock_webhook_secret"
-        )
+        webhook_secret = self.settings.stripe_webhook_secret.strip()
+        if not webhook_secret or webhook_secret == "whsec_your_stripe_webhook_secret":
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "error": "webhook_secret_not_configured",
+                    "message": "STRIPE_WEBHOOK_SECRET is not configured.",
+                },
+            )
 
         try:
             event = stripe.Webhook.construct_event(
