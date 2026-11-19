@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --gl-surface: rgba(24, 24, 28, 0.86);
+  --gl-border: rgba(255, 255, 255, 0.12);
+  --gl-text-primary: #F4F4F5;
+  --gl-text-secondary: #A1A1AA;
+  --gl-accent-cyan: #38BDF8;
+  --gl-accent-indigo: #818CF8;
+  --gl-accent-hc: #FACC15;
+  --gl-badge-text: #0F172A;
+  --gl-terminal-bg: #09090B;
+  --gl-emerald: #22C55E;
+  --gl-font-sans: "Segoe UI Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --gl-font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--gl-text-primary);
+  font-family: var(--gl-font-sans);
+  font-size: 13.5px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+.gl-glass-bar {
+  background: var(--gl-surface);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--gl-border);
+}
+
+.gl-glass-bar-hc {
+  background: rgba(15, 15, 18, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 2px solid var(--gl-accent-hc);
+}
+
+.gl-mono {
+  font-family: var(--gl-font-mono);
+  font-size: 12.5px;
+}
+
+@keyframes gl-pulse-glow {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.75))
+      drop-shadow(0 0 16px rgba(129, 140, 248, 0.45));
+  }
+  50% {
+    opacity: 0.85;
+    filter: drop-shadow(0 0 14px rgba(56, 189, 248, 0.95))
+      drop-shadow(0 0 24px rgba(129, 140, 248, 0.65));
+  }
+}
+
+.gl-pulse-box {
+  animation: gl-pulse-glow 1.8s ease-in-out infinite;
+}
