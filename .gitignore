@@ -38,3 +38,5 @@ benchmarks/results/
 Thumbs.db
 .idea/
 *.log
+*.exe
+*.dll
