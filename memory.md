@@ -161,3 +161,20 @@
   - `cargo clippy --all-targets -- -D warnings` → 0 warnings/errors across all 712 dependencies and crate targets.
   - `cargo build` → compiled `guidelens-desktop.exe` (509 MB with debug symbols).
   - Live execution verified: desktop app generated `%LOCALAPPDATA%\GuideLens\bridge.json`, `/v1/health` returned `{"ok":true,"version":"0.1.0"}`, `/v1/show_command` returned `{"ok":true}`, `/v1/clear` returned `{"ok":true}`, and `guidelens` CLI command succeeded.
+
+### [2026-11-20 14:45] — Agent: Antigravity Coordinator (commit `776b3d4`)
+- **Task:** End-to-end live testing with real Groq API key across all 4 milestones, Groq active model updates, and live desktop bridge verification.
+- **Status:** Completed & 100% Verified
+- **Files Created / Modified:**
+  - `services/cloud/app/config.py` — Updated default `groq_vision_model` to `qwen/qwen3.8-27b` and `groq_reasoning_model` to `openai/gpt-oss-120b`.
+  - `services/cloud/app/groq_service.py` — Added `User-Agent: GuideLens/1.0` to avoid Cloudflare 403 on Groq API.
+  - `services/cloud/.env.example` — Updated example configuration to reflect active Groq models.
+  - `benchmarks/run_benchmark.py` & `benchmarks/tests/test_benchmark.py` — Fixed integer casts for ruff RUF046, updated default BYO groq model to `qwen/qwen3.8-27b`, added `User-Agent` header in `http_post_json`.
+- **Verification / Test Results:**
+  - **Live Groq API Query:** Verified live against `https://api.groq.com/openai/v1/chat/completions` using the user's Groq key; `qwen/qwen3.8-27b` returned valid `StepPlan` JSON in <3s (`mode: guide`, `total_steps: 2`, `<= 140` char instructions, normalized coordinates).
+  - **Full Desktop Bridge Pipeline:** Live `guidelens-desktop.exe` received the Groq-generated StepPlan via `POST /v1/guide` (200 OK), verified `/v1/clear` (200 OK), and verified `guidelens` CLI commands (`command`, `highlight`, `guide`, `clear`).
+  - **Test Suite Pass Rates:**
+    - `services/cloud`: 32/32 pytest passed in 0.94s, `ruff check` passed.
+    - `packages/guidelens-mcp`: 16/16 Vitest passed in 324ms.
+    - `apps/desktop`: 24/24 Vitest passed in 5.34s, `npm run build` compiled `dist/` in 2.28s.
+    - `benchmarks`: 7/7 pytest passed in 0.20s, mock benchmark passed 3/3 (100%, Mean IoU 0.875).
