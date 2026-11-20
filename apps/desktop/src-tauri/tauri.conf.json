@@ -18,7 +18,7 @@
         "url": "/",
         "width": 480,
         "height": 52,
-        "resizable": false,
+        "resizable": true,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
@@ -43,6 +43,21 @@
         "visible": true,
         "focus": false,
         "shadow": false
+      },
+      {
+        "label": "settings",
+        "title": "GuideLens Settings & History",
+        "url": "/settings",
+        "width": 780,
+        "height": 640,
+        "minWidth": 640,
+        "minHeight": 520,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

@@ -164,7 +164,22 @@ impl SecretStore {
 
     pub fn get_api_key(&self, provider: &str) -> Result<Option<String>, String> {
         let account = Self::api_key_account(provider)?;
-        self.backend.get_secret(&account)
+        if let Ok(Some(key)) = self.backend.get_secret(&account) {
+            let trimmed = key.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok(Some(trimmed));
+            }
+        }
+
+        let env_key = format!("{}_API_KEY", provider.trim().to_ascii_uppercase());
+        if let Ok(val) = std::env::var(&env_key) {
+            let trimmed = val.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok(Some(trimmed));
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn delete_api_key(&self, provider: &str) -> Result<(), String> {

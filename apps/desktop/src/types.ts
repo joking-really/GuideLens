@@ -201,7 +201,7 @@ export interface HistoryDetail {
 export const DEFAULT_SETTINGS: Settings = {
   brain_mode: "auto",
   brain_priority: ["agent_cli", "byo_api", "groq_pro", "local_vlm"],
-  byo_provider: "gemini",
+  byo_provider: "groq",
   byo_model: null,
   agent_id: "claude",
   ollama_model: "qwen2.5vl:3b",

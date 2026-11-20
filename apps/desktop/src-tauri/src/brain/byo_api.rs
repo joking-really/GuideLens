@@ -48,7 +48,7 @@ impl ByoProviderId {
             Self::Gemini => "gemini-2.5-flash",
             Self::OpenAi => "gpt-4o-mini",
             Self::Anthropic => "claude-3-5-sonnet-latest",
-            Self::Groq => "meta-llama/llama-4-scout-17b-16e-instruct",
+            Self::Groq => "qwen/qwen3.8-27b",
             Self::OpenRouter => "qwen/qwen2.5-vl-72b-instruct",
         }
     }
@@ -112,6 +112,7 @@ impl ByoApiProvider {
             .to_string();
 
         let client = Client::builder()
+            .user_agent("GuideLens/1.0")
             .timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_else(|_| Client::new());
@@ -343,6 +344,7 @@ impl ByoApiProvider {
         let mut builder = self
             .client
             .post(&url)
+            .header("User-Agent", "GuideLens/1.0")
             .bearer_auth(&self.api_key)
             .json(&payload);
 

@@ -273,7 +273,7 @@ fn default_brain_priority() -> Vec<BrainKind> {
 }
 
 fn default_byo_provider() -> Option<String> {
-    Some("gemini".to_string())
+    Some("groq".to_string())
 }
 
 fn default_agent_id() -> Option<String> {

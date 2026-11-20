@@ -172,6 +172,11 @@ pub fn run() {
                     let _ = window.hide();
                     let _ = overlay::clear_overlay_state(window.app_handle());
                 }
+            } else if window.label() == "settings" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .run(tauri::generate_context!())

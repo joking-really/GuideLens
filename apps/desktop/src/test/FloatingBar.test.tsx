@@ -208,9 +208,9 @@ describe("FloatingBar", () => {
     });
     expect(document.activeElement).toBe(input);
 
-    // Cycle brains: Local -> BYO: Gemini -> Groq Pro -> Agent: Claude -> Auto
+    // Cycle brains: Local -> BYO: Groq -> Groq Pro -> Agent: Claude -> Auto
     await user.click(pill);
-    expect(pill).toHaveTextContent("BYO: Gemini");
+    expect(pill).toHaveTextContent("BYO: Groq");
 
     await user.click(pill);
     expect(pill).toHaveTextContent("Groq Pro");
