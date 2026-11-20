@@ -125,10 +125,10 @@ def generate_synthetic_png(
     Uses only Python stdlib (`zlib`, `struct`).
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    bx1 = max(0, min(width - 1, int(round(bbox_norm[0] / 1000.0 * width))))
-    by1 = max(0, min(height - 1, int(round(bbox_norm[1] / 1000.0 * height))))
-    bw = max(4, int(round(bbox_norm[2] / 1000.0 * width)))
-    bh = max(4, int(round(bbox_norm[3] / 1000.0 * height)))
+    bx1 = max(0, min(width - 1, round(bbox_norm[0] / 1000.0 * width)))
+    by1 = max(0, min(height - 1, round(bbox_norm[1] / 1000.0 * height)))
+    bw = max(4, round(bbox_norm[2] / 1000.0 * width))
+    bh = max(4, round(bbox_norm[3] / 1000.0 * height))
     bx2 = min(width, bx1 + bw)
     by2 = min(height, by1 + bh)
 
@@ -269,7 +269,7 @@ def extract_json_object(raw_text: str) -> dict[str, Any]:
 
 def http_post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float = 30.0) -> dict[str, Any]:
     data = json.dumps(payload).encode("utf-8")
-    req_headers = {"Content-Type": "application/json", **headers}
+    req_headers = {"Content-Type": "application/json", "User-Agent": "GuideLens/1.0", **headers}
     req = urllib.request.Request(url, data=data, headers=req_headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -289,7 +289,7 @@ def call_brain(
 ) -> dict[str, Any]:
     """Invoke the selected brain and return a parsed StepPlan dict."""
     if brain == "mock":
-        if "mock_prediction" in case and case["mock_prediction"]:
+        if case.get("mock_prediction"):
             return case["mock_prediction"]
         # Fallback synthetic prediction matching ground truth
         return {
@@ -362,7 +362,7 @@ def call_brain(
         if provider in ("openai", "groq", "openrouter"):
             default_models = {
                 "openai": "gpt-4o-mini",
-                "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
+                "groq": "qwen/qwen3.8-27b",
                 "openrouter": "qwen/qwen2.5-vl-72b-instruct",
             }
             endpoints = {
@@ -574,8 +574,8 @@ def print_summary(report: dict[str, Any]) -> None:
     print(f"{'Case ID':<34} {'App':<12} {'Expected BBox':<18} {'Pred BBox':<18} {'IoU':>6} {'Status':>6}")
     print("-" * 94)
     for r in report["results"]:
-        exp_str = json.dumps([int(round(v)) for v in r["expected_bbox"]])
-        pred_str = json.dumps([int(round(v)) for v in r["predicted_bbox"]]) if r["predicted_bbox"] else "null"
+        exp_str = json.dumps([round(v) for v in r["expected_bbox"]])
+        pred_str = json.dumps([round(v) for v in r["predicted_bbox"]]) if r["predicted_bbox"] else "null"
         status = "PASS" if r["passed"] else "FAIL"
         print(f"{r['case_id']:<34} {r['app']:<12} {exp_str:<18} {pred_str:<18} {r['iou']:>6.3f} {status:>6}")
         if r["error"]:

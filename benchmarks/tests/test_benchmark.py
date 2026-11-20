@@ -12,7 +12,7 @@ BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 if str(BENCHMARKS_DIR) not in sys.path:
     sys.path.insert(0, str(BENCHMARKS_DIR))
 
-import run_benchmark as bm  # noqa: E402
+import run_benchmark as bm
 
 
 class TestIoUBenchmark(unittest.TestCase):

@@ -38,9 +38,9 @@ class Settings(BaseModel):
     # Groq API
     groq_api_key: str = Field(default="")
     groq_base_url: str = Field(default="https://api.groq.com/openai/v1")
-    groq_vision_model: str = Field(default="meta-llama/llama-4-scout-17b-16e-instruct")
-    groq_reasoning_model: str = Field(default="llama-3.3-70b-versatile")
-    groq_timeout_seconds: float = Field(default=15.0)
+    groq_vision_model: str = Field(default="qwen/qwen3.8-27b")
+    groq_reasoning_model: str = Field(default="openai/gpt-oss-120b")
+    groq_timeout_seconds: float = Field(default=20.0)
 
     # Supabase
     supabase_url: str = Field(default="")

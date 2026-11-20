@@ -89,6 +89,7 @@ class GroqHttpClient:
         headers = {
             "Authorization": f"Bearer {self.settings.groq_api_key}",
             "Content-Type": "application/json",
+            "User-Agent": "GuideLens/1.0",
         }
         try:
             if self._client is not None:
