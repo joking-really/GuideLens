@@ -575,8 +575,10 @@ mod tests {
             .mount(&cloud_402)
             .await;
 
-        let mut auto_settings = Settings::default();
-        auto_settings.brain_priority = vec![BrainKind::GroqPro, BrainKind::LocalVlm];
+        let auto_settings = Settings {
+            brain_priority: vec![BrainKind::GroqPro, BrainKind::LocalVlm],
+            ..Default::default()
+        };
         let auto_secrets = SecretStore::new_memory();
         auto_secrets.save_auth_tokens("jwt-free", "ref-free", None).unwrap();
 
@@ -623,8 +625,10 @@ mod tests {
 
         let byo_secrets = SecretStore::new_memory();
         byo_secrets.set_api_key("openai", "sk-byo-test").unwrap();
-        let mut byo_settings = Settings::default();
-        byo_settings.byo_provider = Some("openai".into());
+        let byo_settings = Settings {
+            byo_provider: Some("openai".into()),
+            ..Default::default()
+        };
         let byo_overrides = ProviderOverrides {
             byo_base_url: Some(byo_server.uri()),
             detected_agents_override: Some(no_agents()),
