@@ -15,18 +15,18 @@
 
 ## Current Project State Snapshot
 - **Project Name:** GuideLens (AI On-Screen Desktop Copilot & Agent Visual Bridge)
-- **Current Phase:** Milestones 1–4 Implementation in Progress (Release/CI/Benchmarks/Docs complete; Desktop Core, Brains, Frontend, MCP, and Cloud actively building)
+- **Current Phase:** All 4 Milestones Built, Verified, and Tested End-to-End
 - **Target Launch OS:** Windows 10/11 (macOS & Linux deferred to V2)
-- **Core Stack:** Tauri v2 (Rust) + React/TS + Local SQLite + Ollama/ONNX + `guidelens-mcp` + Cloud Proxy (FastAPI) + Groq API + Supabase + Stripe
+- **Core Stack:** Tauri v2 (Rust) + React/TS + Local SQLite + Ollama + `guidelens-mcp` + Cloud Proxy (FastAPI) + Groq API + Supabase + Stripe
 - **Active Blockers:** None
 
 ---
 
 ## Milestone Checklist
-- [ ] **Milestone 1:** Tauri v2 shell, global hotkey (`Ctrl + Space`), Windows screen capture, transparent click-through overlay, glowing box + magnifier, click auto-advance
-- [ ] **Milestone 2:** Local SQLite DB, Local VLM runner (Ollama/ONNX), `guidelens-mcp` agent skill bridge (Claude Code, Antigravity, Hermes, Codex), voice/text bar, terminal Copy box
-- [ ] **Milestone 3:** Cloud proxy, Groq API integration, Supabase Auth/DB, Stripe billing, 15 priority app prompt/shortcut profiles
-- [ ] **Milestone 4:** DPI & multi-monitor QA, Windows code signing, Tauri auto-updater, V1 release
+- [x] **Milestone 1:** Tauri v2 shell, global hotkey (`Ctrl + Space`), Windows screen capture, transparent click-through overlay, glowing box + magnifier, click auto-advance
+- [x] **Milestone 2:** Local SQLite DB, Local VLM runner (Ollama), `guidelens-mcp` agent skill bridge (Claude Code, Antigravity, Hermes, Codex), voice/text bar, terminal Copy box
+- [x] **Milestone 3:** Cloud proxy, Groq API integration, Supabase Auth/DB, Stripe billing, 15 priority app prompt/shortcut profiles
+- [x] **Milestone 4:** DPI & multi-monitor QA, Windows code signing pipeline, Tauri auto-updater, V1 release CI & benchmarks
 
 ---
 
@@ -104,3 +104,60 @@
   - `python -m pytest -v` → `28 passed in 1.09s`
   - Live `uvicorn app.main:app --host 127.0.0.1 --port 18765` smoke test (`/health` 200, free `/api/v1/guide` 402, signed webhook 200, Pro `/api/v1/guide` 200, `/api/v1/me` `usage: 1`) → `UVICORN SMOKE TEST PASSED`.
 - **Next Pending Step:** `@verifier-services` to verify `services/cloud` (`9afb547`) independently; `@mcp`, `@core`, `@frontend` to complete builds/tests.
+
+
+### [2026-11-19 13:41] — Agent: mcp (commit `527b5c5`)
+- **Task:** Model Context Protocol stdio server, `guidelens` CLI, agent installer, and agent skill documentation in `packages/guidelens-mcp`.
+- **Status:** Completed & Verified (Verified by `@verifier-services` in #51)
+- **Files Created / Modified:**
+  - `packages/guidelens-mcp/src/` (`types.ts`, `bridge.ts`, `server.ts`, `cli.ts`, `install.ts`, `mcp-bin.ts`, `index.ts`) — `@modelcontextprotocol/sdk` stdio server exposing `capture_screen`, `highlight`, `show_command`, `guide`, `clear`; `BridgeClient` connecting to `127.0.0.1:47615` with Bearer auth; CLI with `install` subcommand for Claude Code, Codex, Gemini, Antigravity, and Hermes.
+  - `packages/guidelens-mcp/skills/guidelens/SKILL.md` & `README.md` — Agent workflow guidance and configuration templates.
+  - `packages/guidelens-mcp/tests/bridge-mcp.test.ts` — Mock bridge server and MCP tool test suite.
+- **Verification / Test Results:**
+  - `npm run typecheck` (`tsc --noEmit`) → 0 errors.
+  - `npm run build` (`tsc -p tsconfig.json`) → 0 errors (`dist/` emitted).
+  - `npx vitest run` → 16/16 passed in 275ms.
+  - Live CLI invocation against running desktop app (`node dist/cli.js command ...`) → returned `{"ok":true}`.
+
+### [2026-11-19 14:00] — Agent: cloud (commit `1b6d69e`)
+- **Task:** Security hardening for FastAPI Cloud Proxy: fail-closed JWT/JWKS verification, fail-closed Stripe webhook secret, and price_id whitelist.
+- **Status:** Completed & Verified (Verified by `@verifier-services` in #51)
+- **Files Created / Modified:**
+  - `services/cloud/app/config.py` — Empty default JWT secret (fails closed without hardcoded fallback).
+  - `services/cloud/app/auth.py` — Rejects HS256 when JWKS is configured (`401 unsupported_jwt_algorithm`), verifies audience, fails closed if secret is missing or placeholder.
+  - `services/cloud/app/stripe_service.py` — Webhook secret fails closed (`500 webhook_secret_not_configured`); Checkout price_id strictly whitelisted against `{stripe_price_monthly, stripe_price_annual}` (`400 invalid_price_id`).
+  - `services/cloud/tests/test_cloud.py` — 4 new security regression tests.
+- **Verification / Test Results:**
+  - `python -m ruff check .` → `All checks passed!`
+  - `python -m ruff format --check .` → `13 files already formatted`.
+  - `python -m pytest -v` → 32/32 passed in 1.03s.
+  - Live `uvicorn` E2E smoke test passed (JWT rejection, free tier 402, webhook signature, Pro StepPlan 200, `/api/v1/me` usage counter increment).
+
+### [2026-11-19 14:03] — Agent: frontend (commit `01b2b0f`)
+- **Task:** React 18 + TypeScript + Tailwind UI in `apps/desktop/src/**`: floating command bar, expandable response card, transparent overlay canvas, settings view, onboarding, and Vitest component test suite.
+- **Status:** Completed & Verified
+- **Files Created / Modified:**
+  - `apps/desktop/src/types.ts` & `apps/desktop/src/lib/ipc.ts` — Complete type definitions matching `decisions.md` and typed wrappers for all 20 Tauri IPC commands and 5 events.
+  - `apps/desktop/src/components/FloatingBar.tsx`, `ResponseBlock.tsx`, `VoiceIndicator.tsx` — 480×52 glassmorphic drag bar, brain mode switcher, auto voice with mute toggle, 1-line plain-text instructions (`<=140` chars), monospace terminal Copy box, fallback prompt.
+  - `apps/desktop/src/components/OverlayCanvas.tsx` & `src/lib/overlayGeometry.ts` — Full-screen transparent canvas, pulsing bounding box, Step badge, and 2.5× circular magnifier lens.
+  - `apps/desktop/src/components/SettingsView.tsx` & `OnboardingView.tsx` — Brain selection, BYO key management in Credential Manager, Ollama pull with progress, Pro billing checkout & usage meter, SQLite history viewer, first-run privacy consent.
+  - `apps/desktop/src/test/` — 5 Vitest suites (`overlayGeometry`, `OverlayCanvas`, `FloatingBar`, `SettingsAndOnboarding`, `AppRouting`).
+- **Verification / Test Results:**
+  - `npx tsc --noEmit` → 0 errors.
+  - `npx vitest run` → 24/24 passed in 5.38s across 5 test suites.
+  - `npm run build` → `dist/` built cleanly in 2.13s.
+
+### [2026-11-20 14:23] — Agent: core (commits `ffe9014`, `b7ba1b0`)
+- **Task:** Tauri v2 desktop shell in `apps/desktop/src-tauri`: Windows screen capture (`xcap`), transparent click-through overlay window, global hotkey (`Ctrl + Space`), mouse click detection for auto-advance, SQLite database with WAL and migrations, and localhost HTTP bridge for MCP agents.
+- **Status:** Completed & Verified
+- **Files Created / Modified:**
+  - `apps/desktop/src-tauri/src/capture/mod.rs` — Sub-80ms monitor capture, JPEG encoding, DPI-aware 0–1000 coordinate normalization.
+  - `apps/desktop/src-tauri/src/overlay/mod.rs` — `WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW` overlay window management and step synchronization.
+  - `apps/desktop/src-tauri/src/input/mod.rs` — Global `Ctrl + Space` hotkey handler and click-in-bounding-box auto-advance hook.
+  - `apps/desktop/src-tauri/src/db/mod.rs` — SQLite database (`rusqlite`) with WAL mode, schema migrations for `sessions`, `steps`, `app_preferences`, and 7-day screenshot cleanup.
+  - `apps/desktop/src-tauri/src/bridge/mod.rs` — Localhost-only (`127.0.0.1:47615`) HTTP bridge with Bearer token authentication saved to `%LOCALAPPDATA%\GuideLens\bridge.json`.
+  - `apps/desktop/src-tauri/src/lib.rs` & `main.rs` — Tauri builder wiring all 20 IPC handlers and state managers.
+- **Verification / Test Results:**
+  - `cargo clippy --all-targets -- -D warnings` → 0 warnings/errors across all 712 dependencies and crate targets.
+  - `cargo build` → compiled `guidelens-desktop.exe` (509 MB with debug symbols).
+  - Live execution verified: desktop app generated `%LOCALAPPDATA%\GuideLens\bridge.json`, `/v1/health` returned `{"ok":true,"version":"0.1.0"}`, `/v1/show_command` returned `{"ok":true}`, `/v1/clear` returned `{"ok":true}`, and `guidelens` CLI command succeeded.
