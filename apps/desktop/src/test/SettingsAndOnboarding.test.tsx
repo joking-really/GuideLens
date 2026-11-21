@@ -192,7 +192,7 @@ describe("SettingsView", () => {
     await user.click(screen.getByTestId("save-api-key-btn"));
 
     expect(mocks.invoke).toHaveBeenCalledWith("set_api_key", {
-      provider: "gemini",
+      provider: "groq",
       key: "AIza-secret-demo-key",
       apiKey: "AIza-secret-demo-key",
       api_key: "AIza-secret-demo-key",
@@ -200,7 +200,7 @@ describe("SettingsView", () => {
     // Key must NEVER remain in JS input state after save
     expect(keyInput.value).toBe("");
     expect(screen.getByTestId("api-key-status-msg")).toHaveTextContent(
-      "Gemini key saved in Windows Credential Manager.",
+      "Groq key saved in Windows Credential Manager.",
     );
 
     // Ollama pull + progress event

@@ -5,6 +5,7 @@ import {
   getSettings,
   isTauriRuntime,
   onOverlayCleared,
+  onSettingsChanged,
   onStepChanged,
   toAssetUrl,
 } from "../lib/ipc";
@@ -85,6 +86,13 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
       }
     });
 
+    const unlistenSettingsPromise = onSettingsChanged((updated) => {
+      if (mounted) {
+        setHighContrastSetting(Boolean(updated.high_contrast));
+        setAlwaysMagnifySetting(Boolean(updated.always_magnify));
+      }
+    });
+
     const handleResize = () => {
       setViewport({
         w: window.innerWidth || 1920,
@@ -110,6 +118,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
       window.removeEventListener("keydown", handleKeyDown);
       unlistenStepPromise.then((fn) => fn()).catch(() => {});
       unlistenClearPromise.then((fn) => fn()).catch(() => {});
+      unlistenSettingsPromise.then((fn) => fn()).catch(() => {});
     };
   }, []);
 

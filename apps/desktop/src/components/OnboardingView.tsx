@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   detectAgents,
+  listApiKeyProviders,
   ollamaPull,
   ollamaStatus,
   onOllamaPullProgress,
@@ -34,7 +35,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
     settings.brain_mode,
   );
   const [byoProvider, setByoProvider] = useState<ApiProvider>(
-    settings.byo_provider ?? "gemini",
+    settings.byo_provider ?? "groq",
   );
   // Ephemeral input state cleared immediately on save (never persisted in JS state)
   const [apiKeyInput, setApiKeyInput] = useState("");
@@ -74,11 +75,19 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
       }
     });
 
+    listApiKeyProviders()
+      .then((providers) => {
+        if (mounted && providers.includes(byoProvider)) {
+          setKeySavedProvider(byoProvider);
+        }
+      })
+      .catch(() => {});
+
     return () => {
       mounted = false;
       unlistenPromise.then((fn) => fn()).catch(() => {});
     };
-  }, []);
+  }, [byoProvider]);
 
   const handleSaveByoKey = async () => {
     const trimmed = apiKeyInput.trim();

@@ -12,8 +12,8 @@ use crate::overlay::OverlayState;
 use crate::types::{HistoryDetail, HistorySession, ResolvedStep, Settings};
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
-    AppHandle, Manager, State,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, PhysicalPosition, State,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -38,8 +38,10 @@ fn get_settings(db: State<'_, DbState>) -> Result<Settings, String> {
 }
 
 #[tauri::command]
-fn set_settings(db: State<'_, DbState>, s: Settings) -> Result<(), String> {
-    db.set_settings(&s)
+fn set_settings(app: AppHandle, db: State<'_, DbState>, s: Settings) -> Result<(), String> {
+    db.set_settings(&s)?;
+    let _ = tauri::Emitter::emit(&app, "settings-changed", &s);
+    Ok(())
 }
 
 #[tauri::command]
@@ -61,15 +63,40 @@ fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
 
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_hide = MenuItem::with_id(app, "toggle_bar", "Show / Hide Bar", true, None::<&str>)?;
+    let open_settings =
+        MenuItem::with_id(app, "open_settings", "Settings & History", true, None::<&str>)?;
     let clear_item = MenuItem::with_id(app, "clear_overlay", "Clear Overlay", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit GuideLens", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_hide, &clear_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show_hide, &open_settings, &clear_item, &quit_item])?;
 
     let mut builder = TrayIconBuilder::new()
         .menu(&menu)
         .tooltip("GuideLens — Press Ctrl+Space to summon")
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                input::toggle_bar_window(tray.app_handle());
+            }
+        })
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle_bar" => input::toggle_bar_window(app),
+            "open_settings" => {
+                if let Some(win) = app.get_webview_window("settings") {
+                    let _ = tauri::Emitter::emit(
+                        app,
+                        "settings-route",
+                        serde_json::json!({ "route": "/settings" }),
+                    );
+                    let _ = win.set_title("GuideLens Settings & History");
+                    let _ = win.unminimize();
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
             "clear_overlay" => {
                 let _ = overlay::clear_overlay_state(app);
             }
@@ -99,6 +126,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(bar) = app.get_webview_window("bar") {
+                let _ = bar.unminimize();
                 let _ = bar.show();
                 let _ = bar.set_focus();
                 let _ = tauri::Emitter::emit(app, "bar-summoned", ());
@@ -117,15 +145,34 @@ pub fn run() {
             // Configure overlay window to span the virtual desktop and be 100% click-through
             overlay::configure_overlay_window(&handle);
 
-            // Restore bar position if persisted in settings
-            if let Some(db) = handle.try_state::<DbState>() {
-                if let Ok(settings) = db.get_settings() {
-                    if let Some(pos) = settings.bar_position {
-                        if let Some(bar) = handle.get_webview_window("bar") {
-                            let _ = bar.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
-                        }
-                    }
+            // Restore bar position if valid within virtual desktop, else center near top of primary monitor
+            if let Some(bar) = handle.get_webview_window("bar") {
+                let (vx, vy, vw, vh) = overlay::virtual_desktop_bounds();
+                let saved_pos = handle
+                    .try_state::<DbState>()
+                    .and_then(|db| db.get_settings().ok())
+                    .and_then(|s| s.bar_position);
+
+                let in_bounds = saved_pos.filter(|pos| {
+                    pos.x >= vx
+                        && pos.x < vx + vw as i32 - 80
+                        && pos.y >= vy
+                        && pos.y < vy + vh as i32 - 40
+                });
+
+                if let Some(pos) = in_bounds {
+                    let _ = bar.set_position(PhysicalPosition::new(pos.x, pos.y));
+                } else if let Ok(Some(mon)) = bar.primary_monitor() {
+                    let scale = mon.scale_factor();
+                    let bar_w = (480.0 * scale).round() as i32;
+                    let x = mon.position().x + ((mon.size().width as i32 - bar_w) / 2).max(0);
+                    let y = mon.position().y + (48.0 * scale).round() as i32;
+                    let _ = bar.set_position(PhysicalPosition::new(x, y));
                 }
+
+                let _ = bar.unminimize();
+                let _ = bar.show();
+                let _ = bar.set_focus();
             }
 
             // Initialize global Ctrl+Space shortcut + WH_MOUSE_LL / WH_KEYBOARD_LL hooks

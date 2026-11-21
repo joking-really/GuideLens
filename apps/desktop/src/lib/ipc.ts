@@ -678,6 +678,30 @@ export function onBarSummoned(handler: () => void): Promise<UnlistenFn> {
   });
 }
 
+export function onSettingsChanged(
+  handler: (settings: Settings) => void,
+): Promise<UnlistenFn> {
+  return listen<Partial<Settings>>("settings-changed", (event) => {
+    const raw = isRecord(event.payload) ? event.payload : {};
+    handler({
+      ...DEFAULT_SETTINGS,
+      ...(raw as Partial<Settings>),
+    });
+  });
+}
+
+export function onSettingsRoute(
+  handler: (route: "/settings" | "/onboarding") => void,
+): Promise<UnlistenFn> {
+  return listen<{ route?: unknown }>("settings-route", (event) => {
+    const route =
+      isRecord(event.payload) && event.payload.route === "/onboarding"
+        ? "/onboarding"
+        : "/settings";
+    handler(route);
+  });
+}
+
 // ============================================================================
 // Window & Asset Helpers
 // ============================================================================
@@ -721,6 +745,25 @@ export async function openSettingsWindow(
   try {
     const existing = await WebviewWindow.getByLabel("settings");
     if (existing) {
+      try {
+        await existing.emit("settings-route", { route });
+      } catch {
+        // Ignore if event emission is unavailable
+      }
+      try {
+        await existing.setTitle(
+          route === "/onboarding"
+            ? "Welcome to GuideLens"
+            : "GuideLens Settings & History",
+        );
+      } catch {
+        // Ignore if setTitle is denied by capability
+      }
+      try {
+        await existing.unminimize();
+      } catch {
+        // Ignore if unminimize is unsupported
+      }
       await existing.show();
       await existing.setFocus();
       return true;

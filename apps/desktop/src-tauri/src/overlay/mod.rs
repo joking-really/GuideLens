@@ -254,6 +254,9 @@ pub fn advance_step(app: &AppHandle) -> Result<Option<ResolvedStep>, String> {
         }
         None => {
             crate::input::release_overlay_hooks();
+            if let Some(overlay_win) = app.get_webview_window("overlay") {
+                let _ = overlay_win.hide();
+            }
             let _ = app.emit("overlay-cleared", ());
             Ok(None)
         }
@@ -270,6 +273,9 @@ pub fn clear_overlay_state(app: &AppHandle) -> Result<(), String> {
         }
     }
     crate::input::release_overlay_hooks();
+    if let Some(overlay_win) = app.get_webview_window("overlay") {
+        let _ = overlay_win.hide();
+    }
     let _ = app.emit("overlay-cleared", ());
     Ok(())
 }

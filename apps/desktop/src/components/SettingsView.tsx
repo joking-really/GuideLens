@@ -69,8 +69,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [configuredProviders, setConfiguredProviders] = useState<ApiProvider[]>(
     [],
   );
-  const [selectedKeyProvider, setSelectedKeyProvider] =
-    useState<ApiProvider>("gemini");
+  const [selectedKeyProvider, setSelectedKeyProvider] = useState<ApiProvider>(
+    initialSettings?.byo_provider ?? "groq",
+  );
   // Ephemeral input: cleared immediately after setApiKey so it is NEVER kept in JS state
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [keyStatusMessage, setKeyStatusMessage] = useState<string | null>(null);
@@ -192,6 +193,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           ? prev
           : [...prev, selectedKeyProvider],
       );
+      if (settings.byo_provider !== selectedKeyProvider) {
+        void updateSettings({ byo_provider: selectedKeyProvider });
+      }
       setKeyStatusMessage(
         `${API_PROVIDER_LABELS[selectedKeyProvider]} key saved in Windows Credential Manager.`,
       );

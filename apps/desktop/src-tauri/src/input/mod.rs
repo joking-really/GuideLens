@@ -30,6 +30,7 @@ pub fn toggle_bar_window(app: &AppHandle) {
             let _ = overlay::clear_overlay_state(app);
         } else {
             capture::remember_foreground_window();
+            let _ = bar.unminimize();
             let _ = bar.show();
             let _ = bar.set_focus();
             let _ = app.emit("bar-summoned", ());
@@ -52,6 +53,22 @@ pub fn init_input_hooks(app: &AppHandle) -> Result<(), String> {
 
     if let Err(e) = app.global_shortcut().register(ctrl_space) {
         log::warn!("Could not register Ctrl+Space global shortcut: {}", e);
+        let ctrl_shift_space =
+            Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space);
+        let app_for_fallback = app.clone();
+        let _ = app
+            .global_shortcut()
+            .on_shortcut(ctrl_shift_space, move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    toggle_bar_window(&app_for_fallback);
+                }
+            });
+        if let Err(fallback_err) = app.global_shortcut().register(ctrl_shift_space) {
+            log::warn!(
+                "Could not register Ctrl+Shift+Space fallback global shortcut: {}",
+                fallback_err
+            );
+        }
     }
 
     Ok(())

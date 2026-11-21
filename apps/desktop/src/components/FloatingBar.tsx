@@ -8,6 +8,7 @@ import {
   onBarSummoned,
   onBrainStatus,
   onOverlayCleared,
+  onSettingsChanged,
   onStepChanged,
   onWindowMoved,
   openSettingsWindow,
@@ -192,6 +193,12 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
       setTotalSteps(0);
     });
 
+    const unlistenSettings = onSettingsChanged((updated) => {
+      if (!mounted || initialSettings) return;
+      setLocalSettings(updated);
+      setMagnify(Boolean(updated.always_magnify));
+    });
+
     return () => {
       mounted = false;
       if (moveSaveTimer !== null) {
@@ -202,6 +209,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
       unlistenStatus.then((fn) => fn()).catch(() => {});
       unlistenStep.then((fn) => fn()).catch(() => {});
       unlistenClear.then((fn) => fn()).catch(() => {});
+      unlistenSettings.then((fn) => fn()).catch(() => {});
     };
   }, [focusInput, initialSettings]);
 
