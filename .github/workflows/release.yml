@@ -127,7 +127,7 @@ jobs:
           }
 
       - name: Build, Authenticode-sign, Ed25519-sign & Publish NSIS + MSI + latest.json
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
