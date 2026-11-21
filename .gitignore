@@ -32,6 +32,8 @@ coverage/
 *.sqlite
 captures/
 benchmarks/results/
+graphify-out/
+.hyperframes/
 
 # OS / editor
 .DS_Store

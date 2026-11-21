@@ -1,0 +1,2 @@
+Built GuideLens — a native Windows AI copilot that doesn't just explain software, it illuminates the exact button on your screen.
+Press Ctrl+Shift+Space, ask a question, and watch a click-through spotlight lock onto your target in real time.
