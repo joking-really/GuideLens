@@ -1,13 +1,133 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../types";
 
 const mocks = vi.hoisted(() => {
   const listeners: Record<string, ((event: { payload: unknown }) => void)[]> =
     {};
+
+  type MockVoiceState = {
+    status: "idle" | "loading" | "ready" | "speaking" | "error";
+    speaking: boolean;
+    voices: ("M2" | "F2")[];
+    sampleRate: number;
+    modelBytes: number;
+    loadMs: number;
+    error: string | null;
+  };
+
+  interface MockClientRecord {
+    speak: ReturnType<typeof vi.fn>;
+    stop: ReturnType<typeof vi.fn>;
+    benchmark: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+    load: ReturnType<typeof vi.fn>;
+  }
+
+  const createdClients: MockClientRecord[] = [];
+
+  class MockTinyVocaClient {
+    private state: MockVoiceState = {
+      status: "idle",
+      speaking: false,
+      voices: ["M2", "F2"],
+      sampleRate: 24000,
+      modelBytes: 0,
+      loadMs: 0,
+      error: null,
+    };
+    private subscribers = new Set<(s: MockVoiceState) => void>();
+
+    private emit(patch: Partial<MockVoiceState>) {
+      this.state = { ...this.state, ...patch };
+      const snap = this.getState();
+      for (const cb of this.subscribers) {
+        cb(snap);
+      }
+    }
+
+    getState(): MockVoiceState {
+      return { ...this.state, voices: [...this.state.voices] };
+    }
+
+    subscribe(cb: (s: MockVoiceState) => void): () => void {
+      this.subscribers.add(cb);
+      return () => {
+        this.subscribers.delete(cb);
+      };
+    }
+
+    load = vi.fn(async () => {
+      this.emit({ status: "ready", loadMs: 88, modelBytes: 7988384 });
+    });
+
+    speak = vi.fn(
+      async (
+        _text: string,
+        opts: {
+          voice: "M2" | "F2";
+          speed?: number;
+          pitchShift?: number;
+          onSentence?: (info: {
+            index: number;
+            total: number;
+            phonemes: string;
+          }) => void;
+        },
+      ) => {
+        this.emit({ status: "speaking", speaking: true, loadMs: 88 });
+        opts.onSentence?.({
+          index: 0,
+          total: 1,
+          phonemes: "<bos> k l ɪ k ð ɪ ɛ k s p ɔːɹ t . <eos>",
+        });
+        this.emit({ status: "ready", speaking: false, loadMs: 88 });
+        return {
+          cancelled: false,
+          audio: new Float32Array([0.05, -0.05, 0.1, -0.1]),
+          sampleRate: 24000,
+          durationSec: 1.25,
+          workSec: 0.09,
+          realtimeFactor: 13.8,
+          phonemes: ["<bos> k l ɪ k ð ɪ ɛ k s p ɔːɹ t . <eos>"],
+        };
+      },
+    );
+
+    stop = vi.fn(() => {
+      this.emit({ status: "ready", speaking: false });
+    });
+
+    benchmark = vi.fn(async () => {
+      this.emit({ status: "ready", loadMs: 88 });
+      return {
+        speed: 14.2,
+        summary: "18.4 s of audio in 1.30 s = 14.2 times real time",
+        parts: "matmul 62%, conv 28%, other 10%",
+        lines: [
+          "sentence 0 M2: 1.50 s in 0.10 s = 15.0x",
+          "sentence 0 F2: 1.52 s in 0.11 s = 13.8x",
+        ],
+      };
+    });
+
+    dispose = vi.fn(() => {
+      this.subscribers.clear();
+    });
+
+    constructor() {
+      createdClients.push(this);
+    }
+  }
+
+  const copilotEngine = new MockTinyVocaClient();
+
   return {
     listeners,
+    createdClients,
+    MockTinyVocaClient,
+    copilotEngine,
     openUrl: vi.fn(async () => {}),
     invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
       switch (cmd) {
@@ -129,6 +249,18 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: mocks.openUrl,
 }));
 
+vi.mock("../lib/tinyVocaClient", async () => {
+  const actual =
+    await vi.importActual<typeof import("../lib/tinyVocaClient")>(
+      "../lib/tinyVocaClient",
+    );
+  return {
+    ...actual,
+    TinyVocaClient: mocks.MockTinyVocaClient,
+    getCopilotVoiceEngine: () => mocks.copilotEngine,
+  };
+});
+
 import { OnboardingView } from "../components/OnboardingView";
 import { SettingsView } from "../components/SettingsView";
 
@@ -168,12 +300,21 @@ describe("OnboardingView", () => {
 });
 
 describe("SettingsView", () => {
+  const originalCreateObjectUrl = URL.createObjectURL;
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+
   beforeEach(() => {
     mocks.invoke.mockClear();
     mocks.openUrl.mockClear();
+    mocks.createdClients.length = 0;
     for (const k of Object.keys(mocks.listeners)) {
       delete mocks.listeners[k];
     }
+  });
+
+  afterEach(() => {
+    URL.createObjectURL = originalCreateObjectUrl;
+    URL.revokeObjectURL = originalRevokeObjectUrl;
   });
 
   it("stores BYO API keys via set_api_key, clears input state, pulls Ollama models, and lists agents", async () => {
@@ -250,5 +391,131 @@ describe("SettingsView", () => {
     expect(
       await screen.findByTestId("history-session-detail"),
     ).toHaveTextContent("Click Object Selection Tool (W)");
+  });
+
+  it("renders Voice Studio tab, persists voice/speed/pitch/STT settings, and runs playground speak, WAV export, and benchmark", async () => {
+    const user = userEvent.setup();
+    const createObjectUrlMock = vi.fn(() => "blob:tiny-voca-test");
+    const revokeObjectUrlMock = vi.fn();
+    URL.createObjectURL = createObjectUrlMock;
+    URL.revokeObjectURL = revokeObjectUrlMock;
+    const anchorClickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+
+    const { unmount } = render(
+      <SettingsView initialSettings={{ ...DEFAULT_SETTINGS, onboarding_complete: true }} />,
+    );
+
+    // Privacy tab has quick shortcut button to Voice Studio
+    await user.click(screen.getByTestId("tab-privacy"));
+    await user.click(screen.getByTestId("open-voice-studio-btn"));
+    expect(screen.getByTestId("panel-voice")).toBeInTheDocument();
+    expect(screen.getByTestId("voice-studio")).toHaveTextContent(
+      "tiny-voca Local Voice Engine · 4.5M params · 8.0 MB Offline · 24 kHz",
+    );
+
+    // Toggle voice guidance, auto-speak, hands-free conversation mode
+    await user.click(screen.getByTestId("tts-auto-speak-toggle"));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_settings",
+      expect.objectContaining({
+        s: expect.objectContaining({ tts_auto_speak: false }),
+      }),
+    );
+
+    await user.click(screen.getByTestId("voice-conversation-mode-toggle"));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_settings",
+      expect.objectContaining({
+        s: expect.objectContaining({ voice_conversation_mode: false }),
+      }),
+    );
+
+    await user.click(screen.getByTestId("tts-enabled-toggle"));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_settings",
+      expect.objectContaining({
+        s: expect.objectContaining({ tts_enabled: false }),
+      }),
+    );
+
+    // Switch persona to F2
+    await user.click(screen.getByTestId("tts-voice-F2"));
+    expect(screen.getByTestId("voice-studio-active-voice")).toHaveTextContent(
+      "Voice: F2",
+    );
+
+    // Adjust speaking speed and pitch shift sliders
+    fireEvent.change(screen.getByTestId("tts-speed-slider"), {
+      target: { value: "1.25" },
+    });
+    expect(screen.getByTestId("tts-speed-value")).toHaveTextContent("1.25×");
+
+    fireEvent.change(screen.getByTestId("tts-pitch-slider"), {
+      target: { value: "-0.15" },
+    });
+    expect(screen.getByTestId("tts-pitch-value")).toHaveTextContent("-0.15");
+
+    // Select Cloud STT engine
+    await user.selectOptions(screen.getByTestId("voice-studio-stt-select"), "cloud");
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "set_settings",
+      expect.objectContaining({
+        s: expect.objectContaining({
+          tts_voice: "F2",
+          tts_speed: 1.25,
+          tts_pitch_shift: -0.15,
+          stt_engine: "cloud",
+        }),
+      }),
+    );
+
+    // Playground: preset chip -> Play Sample -> phoneme log -> Save as WAV -> Measure Speed
+    const saveWavBtn = screen.getByTestId("voice-studio-save-wav-btn");
+    expect(saveWavBtn).toBeDisabled();
+
+    await user.click(screen.getByTestId("voice-preset-welcome"));
+    expect(
+      (screen.getByTestId("voice-studio-textarea") as HTMLTextAreaElement).value,
+    ).toContain("Welcome to GuideLens Voice Studio");
+
+    const client = mocks.createdClients[mocks.createdClients.length - 1];
+    await user.click(screen.getByTestId("voice-studio-play-btn"));
+
+    await waitFor(() => {
+      expect(client.speak).toHaveBeenCalledWith(
+        expect.stringContaining("Welcome to GuideLens Voice Studio"),
+        expect.objectContaining({
+          voice: "F2",
+          speed: 1.25,
+          pitchShift: -0.15,
+        }),
+      );
+    });
+    expect(screen.getByTestId("voice-studio-log")).toHaveTextContent(
+      "<bos> k l ɪ k",
+    );
+    expect(saveWavBtn).toBeEnabled();
+
+    await user.click(saveWavBtn);
+    expect(createObjectUrlMock).toHaveBeenCalledTimes(1);
+    const createdBlob = (createObjectUrlMock.mock.calls[0] as unknown[])[0] as Blob;
+    expect(createdBlob.type).toBe("audio/wav");
+    expect(anchorClickSpy).toHaveBeenCalledTimes(1);
+    anchorClickSpy.mockRestore();
+
+    await user.click(screen.getByTestId("voice-studio-benchmark-btn"));
+    await waitFor(() => {
+      expect(screen.getByTestId("voice-studio-benchmark-results")).toHaveTextContent(
+        "14.2 times real time",
+      );
+    });
+    expect(screen.getByTestId("voice-studio-benchmark-results")).toHaveTextContent(
+      "sentence 0 M2: 1.50 s in 0.10 s = 15.0x",
+    );
+
+    unmount();
+    expect(client.dispose).toHaveBeenCalledTimes(1);
   });
 });

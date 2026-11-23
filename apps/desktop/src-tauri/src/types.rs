@@ -45,6 +45,8 @@ pub struct Step {
     pub terminal_command: Option<String>,
     #[serde(default)]
     pub explanation: Option<String>,
+    #[serde(default)]
+    pub spoken_text: Option<String>,
 }
 
 impl Step {
@@ -63,6 +65,14 @@ impl Step {
         self.instruction_line = Self::clamp_instruction(&self.instruction_line);
         if let Some(ref exp) = self.explanation {
             self.explanation = Some(Self::clamp_instruction(exp));
+        }
+        if let Some(ref spoken) = self.spoken_text {
+            let clamped = Self::clamp_instruction(spoken);
+            self.spoken_text = if clamped.is_empty() {
+                None
+            } else {
+                Some(clamped)
+            };
         }
         self.confidence = self.confidence.clamp(0.0, 1.0);
     }
@@ -130,6 +140,8 @@ pub struct ResolvedStep {
     #[serde(default)]
     pub explanation: Option<String>,
     #[serde(default)]
+    pub spoken_text: Option<String>,
+    #[serde(default)]
     pub rect_px: Option<RectPx>,
     #[serde(default)]
     pub source: StepSource,
@@ -160,6 +172,7 @@ impl ResolvedStep {
             shortcut: step.shortcut,
             terminal_command: step.terminal_command,
             explanation: step.explanation,
+            spoken_text: step.spoken_text,
             rect_px: final_rect,
             source: final_source,
         }
@@ -176,6 +189,7 @@ impl ResolvedStep {
             shortcut: self.shortcut.clone(),
             terminal_command: self.terminal_command.clone(),
             explanation: self.explanation.clone(),
+            spoken_text: self.spoken_text.clone(),
         }
     }
 }
@@ -299,6 +313,30 @@ pub fn default_cloud_url() -> String {
         .unwrap_or_else(|| "http://127.0.0.1:8000".to_string())
 }
 
+fn default_tts_enabled() -> bool {
+    true
+}
+
+fn default_tts_voice() -> String {
+    "M2".to_string()
+}
+
+fn default_tts_speed() -> f64 {
+    1.0
+}
+
+fn default_tts_pitch_shift() -> f64 {
+    0.0
+}
+
+fn default_tts_auto_speak() -> bool {
+    true
+}
+
+fn default_voice_conversation_mode() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "default_brain_mode")]
@@ -329,6 +367,18 @@ pub struct Settings {
     pub bar_position: Option<BarPosition>,
     #[serde(default = "default_cloud_url")]
     pub cloud_url: String,
+    #[serde(default = "default_tts_enabled")]
+    pub tts_enabled: bool,
+    #[serde(default = "default_tts_voice")]
+    pub tts_voice: String,
+    #[serde(default = "default_tts_speed")]
+    pub tts_speed: f64,
+    #[serde(default = "default_tts_pitch_shift")]
+    pub tts_pitch_shift: f64,
+    #[serde(default = "default_tts_auto_speak")]
+    pub tts_auto_speak: bool,
+    #[serde(default = "default_voice_conversation_mode")]
+    pub voice_conversation_mode: bool,
 }
 
 impl Default for Settings {
@@ -348,6 +398,12 @@ impl Default for Settings {
             onboarding_complete: false,
             bar_position: None,
             cloud_url: default_cloud_url(),
+            tts_enabled: default_tts_enabled(),
+            tts_voice: default_tts_voice(),
+            tts_speed: default_tts_speed(),
+            tts_pitch_shift: default_tts_pitch_shift(),
+            tts_auto_speak: default_tts_auto_speak(),
+            voice_conversation_mode: default_voice_conversation_mode(),
         }
     }
 }
@@ -425,4 +481,76 @@ pub struct HistoryStep {
 pub struct HistoryDetail {
     pub session: HistorySession,
     pub steps: Vec<HistoryStep>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_settings_json_deserializes_with_tts_defaults() {
+        let legacy_json = r#"{
+            "brain_mode": "groq_pro",
+            "voice_enabled": true,
+            "high_contrast": true,
+            "capture_retention_days": 14,
+            "onboarding_complete": true
+        }"#;
+
+        let settings: Settings =
+            serde_json::from_str(legacy_json).expect("legacy settings JSON must deserialize");
+        assert_eq!(settings.brain_mode, "groq_pro");
+        assert!(settings.voice_enabled);
+        assert!(settings.high_contrast);
+        assert_eq!(settings.capture_retention_days, 14);
+        assert!(settings.onboarding_complete);
+
+        assert!(settings.tts_enabled);
+        assert_eq!(settings.tts_voice, "M2");
+        assert!((settings.tts_speed - 1.0).abs() < 1e-9);
+        assert!((settings.tts_pitch_shift - 0.0).abs() < 1e-9);
+        assert!(settings.tts_auto_speak);
+        assert!(settings.voice_conversation_mode);
+
+        let defaults = Settings::default();
+        assert!(defaults.tts_enabled);
+        assert_eq!(defaults.tts_voice, "M2");
+        assert!((defaults.tts_speed - 1.0).abs() < 1e-9);
+        assert!((defaults.tts_pitch_shift - 0.0).abs() < 1e-9);
+        assert!(defaults.tts_auto_speak);
+        assert!(defaults.voice_conversation_mode);
+    }
+
+    #[test]
+    fn step_and_resolved_step_clamp_and_preserve_spoken_text() {
+        let long_spoken = "x".repeat(MAX_INSTRUCTION_CHARS + 20);
+        let mut step = Step {
+            step_number: 1,
+            instruction_line: "Click File.".to_string(),
+            target_name: Some("File".to_string()),
+            control_type: Some("MenuItem".to_string()),
+            bbox: Some([10.0, 20.0, 30.0, 20.0]),
+            confidence: 0.9,
+            shortcut: None,
+            terminal_command: None,
+            explanation: None,
+            spoken_text: Some(long_spoken),
+        };
+        step.enforce_limits();
+        let clamped = step.spoken_text.as_deref().expect("clamped spoken_text");
+        assert_eq!(clamped.chars().count(), MAX_INSTRUCTION_CHARS);
+        assert!(clamped.ends_with('…'));
+
+        let resolved = ResolvedStep::from_step(step.clone(), None, StepSource::None);
+        assert_eq!(resolved.spoken_text, step.spoken_text);
+        let roundtrip = resolved.to_step();
+        assert_eq!(roundtrip.spoken_text, step.spoken_text);
+
+        let mut blank_step = Step {
+            spoken_text: Some("   \n\t  ".to_string()),
+            ..roundtrip
+        };
+        blank_step.enforce_limits();
+        assert_eq!(blank_step.spoken_text, None);
+    }
 }

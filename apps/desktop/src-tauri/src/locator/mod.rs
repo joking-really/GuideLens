@@ -266,6 +266,7 @@ mod tests {
             shortcut: None,
             terminal_command: None,
             explanation: None,
+            spoken_text: None,
         }
     }
 

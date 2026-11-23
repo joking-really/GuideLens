@@ -1,28 +1,84 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../types";
 
-const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(async (cmd: string) => {
-    switch (cmd) {
-      case "get_settings":
-        return { ...DEFAULT_SETTINGS, onboarding_complete: true };
-      case "list_api_key_providers":
-        return [];
-      case "ollama_status":
-        return { running: false, models: [], install_url: "https://ollama.com/download" };
-      case "detect_agents":
-        return [];
-      case "auth_status":
-        return { logged_in: false, email: null, tier: "free", status: "inactive", usage: 0, limit: 1500 };
-      case "history_list":
-        return [];
-      default:
-        return null;
+const mocks = vi.hoisted(() => {
+  const listeners: Record<string, ((ev: { payload: unknown }) => void)[]> = {};
+
+  class MockTinyVocaClient {
+    getState() {
+      return {
+        status: "idle" as const,
+        speaking: false,
+        voices: ["M2" as const, "F2" as const],
+        sampleRate: 24000,
+        modelBytes: 0,
+        loadMs: 0,
+        error: null,
+      };
     }
-  }),
-  listen: vi.fn(async () => () => {}),
-}));
+    subscribe() {
+      return () => {};
+    }
+    load = vi.fn(async () => {});
+    speak = vi.fn(async () => ({
+      cancelled: false,
+      audio: new Float32Array(0),
+      sampleRate: 24000,
+      durationSec: 0,
+      workSec: 0,
+      realtimeFactor: 0,
+      phonemes: [],
+    }));
+    stop = vi.fn();
+    benchmark = vi.fn(async () => ({
+      speed: 10,
+      summary: "10x",
+      parts: "",
+      lines: [],
+    }));
+    dispose = vi.fn();
+  }
+
+  const copilotEngine = new MockTinyVocaClient();
+
+  return {
+    listeners,
+    MockTinyVocaClient,
+    copilotEngine,
+    invoke: vi.fn(async (cmd: string) => {
+      switch (cmd) {
+        case "get_settings":
+          return { ...DEFAULT_SETTINGS, onboarding_complete: true };
+        case "list_api_key_providers":
+          return [];
+        case "ollama_status":
+          return { running: false, models: [], install_url: "https://ollama.com/download" };
+        case "detect_agents":
+          return [];
+        case "auth_status":
+          return { logged_in: false, email: null, tier: "free", status: "inactive", usage: 0, limit: 1500 };
+        case "history_list":
+          return [];
+        default:
+          return null;
+      }
+    }),
+    listen: vi.fn(async (event: string, cb: (ev: { payload: unknown }) => void) => {
+      listeners[event] = listeners[event] || [];
+      listeners[event].push(cb);
+      return () => {
+        listeners[event] = (listeners[event] || []).filter((fn) => fn !== cb);
+      };
+    }),
+    emitMockEvent(event: string, payload: unknown) {
+      for (const cb of listeners[event] || []) {
+        cb({ payload });
+      }
+    },
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: mocks.invoke,
@@ -55,11 +111,24 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
   },
 }));
 
+vi.mock("../lib/tinyVocaClient", () => ({
+  TinyVocaClient: mocks.MockTinyVocaClient,
+  getCopilotVoiceEngine: () => mocks.copilotEngine,
+  encodeWavBlob: () => new Blob([], { type: "audio/wav" }),
+}));
+
 import App from "../App";
 import { normalizeAskResponse, parseAskError } from "../lib/ipc";
 import { clampInstruction } from "../types";
 
 describe("App routing and IPC helpers", () => {
+  beforeEach(() => {
+    mocks.invoke.mockClear();
+    for (const k of Object.keys(mocks.listeners)) {
+      delete mocks.listeners[k];
+    }
+  });
+
   afterEach(() => {
     window.history.pushState({}, "", "/");
   });
@@ -91,12 +160,62 @@ describe("App routing and IPC helpers", () => {
     expect(screen.getByTestId("panel-history")).toBeInTheDocument();
   });
 
-  it("renders OnboardingView on route /onboarding", async () => {
+  it("renders SettingsView Voice Studio on route /settings?tab=voice", async () => {
+    window.history.pushState({}, "", "/settings?tab=voice");
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId("settings-view")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("panel-voice")).toBeInTheDocument();
+    expect(screen.getByTestId("voice-studio")).toBeInTheDocument();
+  });
+
+  it("switches active tab via settings-route event even when Settings window is already mounted", async () => {
+    const user = userEvent.setup();
+    window.history.pushState({}, "", "/settings?tab=voice");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("panel-voice")).toBeInTheDocument();
+    });
+
+    // User locally switches to privacy tab
+    await user.click(screen.getByTestId("tab-privacy"));
+    expect(screen.getByTestId("panel-privacy")).toBeInTheDocument();
+
+    // Emitting settings-route { route: "/settings", tab: "voice" } jumps back to Voice Studio
+    await act(async () => {
+      mocks.emitMockEvent("settings-route", {
+        route: "/settings",
+        tab: "voice",
+      });
+    });
+    expect(screen.getByTestId("panel-voice")).toBeInTheDocument();
+
+    // Emitting settings-route { route: "/settings", tab: "history" } jumps to History
+    await act(async () => {
+      mocks.emitMockEvent("settings-route", {
+        route: "/settings",
+        tab: "history",
+      });
+    });
+    expect(screen.getByTestId("panel-history")).toBeInTheDocument();
+  });
+
+  it("renders OnboardingView on route /onboarding and switches to /settings?tab=voice on settings-route event", async () => {
     window.history.pushState({}, "", "/onboarding");
     render(<App />);
     await waitFor(() => {
       expect(screen.getByTestId("onboarding-view")).toBeInTheDocument();
     });
+
+    await act(async () => {
+      mocks.emitMockEvent("settings-route", {
+        route: "/settings",
+        tab: "voice",
+      });
+    });
+    expect(screen.getByTestId("panel-voice")).toBeInTheDocument();
   });
 
   it("clamps instructions to 140 chars and parses structured/plain AskErrors", () => {

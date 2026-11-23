@@ -34,12 +34,15 @@ import {
   OLLAMA_MODELS,
   type OllamaStatus,
   type Settings,
+  type SettingsTab,
   type SttEngine,
 } from "../types";
+import { VoiceStudio } from "./VoiceStudio";
 
 export interface SettingsViewProps {
   initialSettings?: Settings;
-  initialTab?: "brains" | "account" | "privacy" | "history";
+  initialTab?: SettingsTab;
+  tabSyncSeq?: number;
   onSettingsChange?: (settings: Settings) => void;
   onClose?: () => void;
 }
@@ -57,12 +60,15 @@ const ALL_AGENT_IDS: AgentId[] = ["claude", "codex", "gemini", "agy", "hermes"];
 export const SettingsView: React.FC<SettingsViewProps> = ({
   initialSettings,
   initialTab = "brains",
+  tabSyncSeq = 0,
   onSettingsChange,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<
-    "brains" | "account" | "privacy" | "history"
-  >(initialTab);
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab, tabSyncSeq]);
   const [settings, setLocalSettings] = useState<Settings>(
     initialSettings ?? DEFAULT_SETTINGS,
   );
@@ -318,6 +324,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {(
             [
               { id: "brains", label: "Brains & Models" },
+              { id: "voice", label: "Voice Studio" },
               { id: "account", label: "Account & Pro ($19/mo)" },
               { id: "privacy", label: "Voice, Display & Privacy" },
               { id: "history", label: "Session History" },
@@ -678,7 +685,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* TAB 2: Account, Usage Meter, Pro Upgrade */}
+        {/* TAB 2: Voice Studio (tiny-voca Offline TTS + Playground) */}
+        {activeTab === "voice" && (
+          <div data-testid="panel-voice">
+            <VoiceStudio settings={settings} onUpdateSettings={updateSettings} />
+          </div>
+        )}
+
+        {/* TAB 3: Account, Usage Meter, Pro Upgrade */}
         {activeTab === "account" && (
           <div className="space-y-5" data-testid="panel-account">
             <section className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3">
@@ -824,9 +838,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {activeTab === "privacy" && (
           <div className="space-y-4" data-testid="panel-privacy">
             <section className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3">
-              <h2 className="text-[13.5px] font-semibold text-[#F4F4F5]">
-                Voice & Accessibility
-              </h2>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-[13.5px] font-semibold text-[#F4F4F5]">
+                  Voice & Accessibility
+                </h2>
+                <button
+                  type="button"
+                  data-testid="open-voice-studio-btn"
+                  onClick={() => setActiveTab("voice")}
+                  className="px-2.5 py-1 rounded-lg bg-[#38BDF8]/15 border border-[#38BDF8]/40 text-[#38BDF8] text-[12px] font-medium hover:bg-[#38BDF8]/25 transition-colors"
+                >
+                  Open Voice Studio →
+                </button>
+              </div>
 
               <div className="flex items-center justify-between">
                 <label

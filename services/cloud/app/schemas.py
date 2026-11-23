@@ -38,6 +38,7 @@ class Step(BaseModel):
     shortcut: str | None = Field(default=None)
     terminal_command: str | None = Field(default=None)
     explanation: str | None = Field(default=None)
+    spoken_text: str | None = Field(default=None)
 
     @field_validator("instruction_line")
     @classmethod
@@ -72,6 +73,13 @@ class Step(BaseModel):
         if value is None:
             return None
         return normalize_single_line(value, max_len=280) or None
+
+    @field_validator("spoken_text")
+    @classmethod
+    def validate_spoken_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_single_line(value, max_len=MAX_INSTRUCTION_CHARS) or None
 
 
 class StepPlan(BaseModel):
@@ -181,6 +189,12 @@ def repair_step_plan(raw: str | dict[str, Any]) -> StepPlan:
         else:
             explanation = None
 
+        spoken_text = item.get("spoken_text")
+        if isinstance(spoken_text, str):
+            spoken_text = normalize_single_line(spoken_text, max_len=MAX_INSTRUCTION_CHARS) or None
+        else:
+            spoken_text = None
+
         target_name = item.get("target_name")
         if isinstance(target_name, str):
             target_name = normalize_single_line(target_name, max_len=120) or None
@@ -217,6 +231,7 @@ def repair_step_plan(raw: str | dict[str, Any]) -> StepPlan:
                 "shortcut": shortcut,
                 "terminal_command": terminal_command,
                 "explanation": explanation,
+                "spoken_text": spoken_text,
             }
         )
 

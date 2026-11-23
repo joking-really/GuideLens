@@ -323,6 +323,7 @@ pub fn show_terminal_command(
         shortcut: None,
         terminal_command: Some(command),
         explanation: Some(clamped_exp),
+        spoken_text: None,
         rect_px: None,
         source: StepSource::None,
     };

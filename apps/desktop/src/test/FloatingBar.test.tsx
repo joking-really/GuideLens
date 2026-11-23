@@ -1,13 +1,87 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../types";
 
 const mocks = vi.hoisted(() => {
   const listeners: Record<string, ((event: { payload: unknown }) => void)[]> =
     {};
+
+  type MockVoiceState = {
+    status: "idle" | "loading" | "ready" | "speaking" | "error";
+    speaking: boolean;
+    voices: ("M2" | "F2")[];
+    sampleRate: number;
+    modelBytes: number;
+    loadMs: number;
+    error: string | null;
+  };
+
+  let voiceState: MockVoiceState = {
+    status: "idle",
+    speaking: false,
+    voices: ["M2", "F2"],
+    sampleRate: 24000,
+    modelBytes: 0,
+    loadMs: 0,
+    error: null,
+  };
+  const voiceSubscribers = new Set<(s: MockVoiceState) => void>();
+  const emitVoiceState = (patch: Partial<MockVoiceState>) => {
+    voiceState = { ...voiceState, ...patch };
+    const snapshot = { ...voiceState, voices: [...voiceState.voices] };
+    for (const cb of voiceSubscribers) {
+      cb(snapshot);
+    }
+  };
+
+  const voiceEngine = {
+    getState: () => ({ ...voiceState, voices: [...voiceState.voices] }),
+    subscribe: vi.fn((cb: (s: MockVoiceState) => void) => {
+      voiceSubscribers.add(cb);
+      return () => {
+        voiceSubscribers.delete(cb);
+      };
+    }),
+    load: vi.fn(async () => {
+      emitVoiceState({ status: "ready", loadMs: 120, modelBytes: 7988384 });
+    }),
+    speak: vi.fn(async () => ({
+      cancelled: false,
+      audio: new Float32Array([0.1, -0.1]),
+      sampleRate: 24000,
+      durationSec: 0.8,
+      workSec: 0.08,
+      realtimeFactor: 10,
+      phonemes: ["k l ɪ k"],
+    })),
+    stop: vi.fn(() => {
+      if (voiceState.speaking || voiceState.status === "speaking") {
+        emitVoiceState({ speaking: false, status: "ready" });
+      }
+    }),
+    reset() {
+      voiceSubscribers.clear();
+      voiceState = {
+        status: "idle",
+        speaking: false,
+        voices: ["M2", "F2"],
+        sampleRate: 24000,
+        modelBytes: 0,
+        loadMs: 0,
+        error: null,
+      };
+      this.load.mockClear();
+      this.speak.mockClear();
+      this.stop.mockClear();
+      this.subscribe.mockClear();
+    },
+    emitState: emitVoiceState,
+  };
+
   return {
     listeners,
+    voiceEngine,
     invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
       if (cmd === "get_settings") {
         return { ...DEFAULT_SETTINGS, onboarding_complete: true };
@@ -23,6 +97,9 @@ const mocks = vi.hoisted(() => {
       }
       if (cmd === "copy_to_clipboard") {
         return null;
+      }
+      if (cmd === "transcribe") {
+        return { text: "how do I export" };
       }
       if (cmd === "next_step") {
         return {
@@ -176,14 +253,28 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
   },
 }));
 
+vi.mock("../lib/tinyVocaClient", () => ({
+  getCopilotVoiceEngine: () => mocks.voiceEngine,
+  TinyVocaClient: class {},
+  encodeWavBlob: () => new Blob([], { type: "audio/wav" }),
+}));
+
 import { FloatingBar } from "../components/FloatingBar";
 
 describe("FloatingBar", () => {
   beforeEach(() => {
     mocks.invoke.mockClear();
+    mocks.voiceEngine.reset();
     for (const k of Object.keys(mocks.listeners)) {
       delete mocks.listeners[k];
     }
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete window.SpeechRecognition;
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+    delete (window as unknown as { MediaRecorder?: unknown }).MediaRecorder;
   });
 
   it("renders compact 480x52 drag bar, focuses input on bar-summoned, and cycles brain modes", async () => {
@@ -250,8 +341,6 @@ describe("FloatingBar", () => {
     await user.click(voiceBtn);
     expect(voiceBtn).toHaveAttribute("aria-pressed", "false");
     expect(stopMock).toHaveBeenCalledTimes(1);
-
-    delete window.SpeechRecognition;
   });
 
   it("submits query, renders plain-text step response safely (no HTML), advances steps, and clears on Esc", async () => {
@@ -350,5 +439,434 @@ describe("FloatingBar", () => {
       brainOverride: "local_vlm",
       brain_override: "local_vlm",
     });
+  });
+
+  it("warm-loads voice engine, persists speaker mute toggle, and stops playback when clicked while speaking", async () => {
+    vi.useFakeTimers();
+    render(
+      <FloatingBar
+        initialSettings={{
+          onboarding_complete: true,
+          tts_enabled: true,
+        }}
+      />,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+    expect(mocks.voiceEngine.load).toHaveBeenCalledTimes(1);
+
+    const speakerBtn = screen.getByTestId("tts-mute-toggle");
+    expect(speakerBtn).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("tts-speaking-pulse")).toBeNull();
+
+    await act(async () => {
+      mocks.voiceEngine.emitState({ status: "speaking", speaking: true });
+    });
+    expect(screen.getByTestId("tts-speaking-pulse")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(speakerBtn);
+    });
+    expect(mocks.voiceEngine.stop).toHaveBeenCalled();
+    expect(speakerBtn).toHaveAttribute("aria-pressed", "false");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_settings",
+      expect.objectContaining({
+        s: expect.objectContaining({ tts_enabled: false }),
+      }),
+    );
+  });
+
+  it("deduplicates step 0 speech across ask() + step-changed, speaks errors, and stops on Escape/overlay-cleared", async () => {
+    const user = userEvent.setup();
+    render(
+      <FloatingBar
+        initialSettings={{
+          onboarding_complete: true,
+          tts_enabled: true,
+          tts_auto_speak: true,
+          tts_voice: "F2",
+          tts_speed: 1.15,
+          tts_pitch_shift: 0.1,
+        }}
+      />,
+    );
+
+    const input = screen.getByTestId("bar-query-input");
+    await user.type(input, "Remove background{enter}");
+
+    await screen.findByTestId("response-block");
+    expect(mocks.voiceEngine.speak).toHaveBeenCalledTimes(1);
+    expect(mocks.voiceEngine.speak).toHaveBeenCalledWith(
+      expect.stringContaining("First, click the Object Selection Tool"),
+      expect.objectContaining({
+        voice: "F2",
+        speed: 1.15,
+        pitchShift: 0.1,
+      }),
+    );
+
+    // Rust emitting step-changed for step 0 must NOT double-speak step 0
+    await act(async () => {
+      mocks.emitMockEvent("step-changed", {
+        index: 0,
+        total: 2,
+        mode: "guide",
+        step: {
+          step_number: 1,
+          instruction_line:
+            "Click the Object Selection Tool in the left toolbar <script>alert(1)</script>",
+          confidence: 0.92,
+          shortcut: "W",
+          rect_px: { x: 40, y: 180, w: 32, h: 32 },
+          source: "uia",
+        },
+      });
+    });
+    expect(mocks.voiceEngine.speak).toHaveBeenCalledTimes(1);
+
+    // Advancing to step 2 stops previous speech and speaks step 2 once
+    await user.click(screen.getByTestId("next-step-btn"));
+    await waitFor(() => {
+      expect(mocks.voiceEngine.speak).toHaveBeenCalledTimes(2);
+    });
+    expect(mocks.voiceEngine.speak).toHaveBeenLastCalledWith(
+      expect.stringContaining("Finally, click Select Subject"),
+      expect.objectContaining({ voice: "F2" }),
+    );
+
+    // overlay-cleared stops speech and resets deduplication
+    await act(async () => {
+      mocks.emitMockEvent("overlay-cleared", {});
+    });
+    expect(mocks.voiceEngine.stop).toHaveBeenCalled();
+
+    // Error cue spoken on ask failure
+    await user.clear(input);
+    await user.type(input, "timeout-test{enter}");
+    await screen.findByTestId("response-error");
+    await waitFor(() => {
+      expect(mocks.voiceEngine.speak).toHaveBeenCalledTimes(3);
+    });
+    expect(mocks.voiceEngine.speak).toHaveBeenLastCalledWith(
+      expect.stringContaining("That took too long to answer."),
+      expect.any(Object),
+    );
+  });
+
+  it("supports ResponseBlock Speak/Stop buttons and suppresses mic during TTS with 250ms echo-settle delay", async () => {
+    vi.useFakeTimers();
+    const startMock = vi.fn();
+    const stopMock = vi.fn();
+    class FakeSpeechRecognition {
+      continuous = false;
+      interimResults = false;
+      lang = "";
+      onresult: ((e: unknown) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      start = startMock;
+      stop = stopMock;
+    }
+    window.SpeechRecognition = FakeSpeechRecognition as unknown as typeof window.SpeechRecognition;
+
+    render(
+      <FloatingBar
+        initialSettings={{
+          onboarding_complete: true,
+          voice_enabled: true,
+          voice_conversation_mode: true,
+          tts_enabled: true,
+          tts_auto_speak: false,
+        }}
+      />,
+    );
+
+    expect(startMock).toHaveBeenCalledTimes(1);
+    const voiceBtn = screen.getByTestId("voice-mute-toggle");
+    expect(voiceBtn).toHaveAttribute("data-paused-for-tts", "false");
+
+    // Emit step via step-changed
+    await act(async () => {
+      mocks.emitMockEvent("step-changed", {
+        index: 0,
+        total: 1,
+        mode: "guide",
+        step: {
+          step_number: 1,
+          instruction_line: "Click Export",
+          spoken_text: "Click the Export button on the top right.",
+          confidence: 0.9,
+          rect_px: { x: 100, y: 20, w: 80, h: 30 },
+          source: "uia",
+        },
+      });
+    });
+
+    // Manual Speak button in ResponseBlock
+    const replayBtn = screen.getByTestId("replay-speech-btn");
+    await act(async () => {
+      fireEvent.click(replayBtn);
+    });
+    expect(mocks.voiceEngine.speak).toHaveBeenCalledTimes(1);
+
+    // While engine is speaking: ResponseBlock shows Stop button and VoiceIndicator pauses mic
+    await act(async () => {
+      mocks.voiceEngine.emitState({ status: "speaking", speaking: true });
+    });
+    expect(voiceBtn).toHaveAttribute("data-paused-for-tts", "true");
+    expect(stopMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("voice-pulse-ring")).toBeNull();
+
+    const stopSpeechBtn = screen.getByTestId("stop-speech-btn");
+    await act(async () => {
+      fireEvent.click(stopSpeechBtn);
+    });
+    expect(mocks.voiceEngine.stop).toHaveBeenCalled();
+
+    // After TTS stops, mic stays paused during 250ms echo-settle delay, then resumes
+    expect(voiceBtn).toHaveAttribute("data-paused-for-tts", "false");
+    expect(startMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(startMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(startMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("handles local hands-free voice commands without calling ask and submits spoken questions", async () => {
+    let recognitionInstance: {
+      onresult: ((ev: unknown) => void) | null;
+      start: () => void;
+      stop: () => void;
+    } | null = null;
+    class FakeSpeechRecognition {
+      continuous = false;
+      interimResults = false;
+      lang = "";
+      onresult: ((e: unknown) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      start = vi.fn();
+      stop = vi.fn();
+      constructor() {
+        recognitionInstance = this;
+      }
+    }
+    window.SpeechRecognition = FakeSpeechRecognition as unknown as typeof window.SpeechRecognition;
+
+    const emitTranscript = async (text: string, isFinal = true) => {
+      await act(async () => {
+        recognitionInstance?.onresult?.({
+          resultIndex: 0,
+          results: {
+            length: 1,
+            0: { isFinal, 0: { transcript: text } },
+          },
+        });
+      });
+    };
+
+    render(
+      <FloatingBar
+        initialSettings={{
+          onboarding_complete: true,
+          voice_enabled: true,
+          stt_engine: "web_speech",
+          tts_enabled: true,
+          tts_auto_speak: true,
+        }}
+      />,
+    );
+
+    // 1. Spoken question submits ask() and interrupts speech first
+    await emitTranscript("how do I remove the background?");
+    await waitFor(() => {
+      expect(screen.getByTestId("step-counter")).toHaveTextContent("Step 1/2");
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("ask", expect.objectContaining({ query: "how do I remove the background?" }));
+    mocks.invoke.mockClear();
+    mocks.voiceEngine.speak.mockClear();
+
+    // 2. "repeat" replays current step without calling ask()
+    await emitTranscript("repeat");
+    expect(mocks.invoke).not.toHaveBeenCalledWith("ask", expect.anything());
+    expect(mocks.voiceEngine.speak).toHaveBeenCalledTimes(1);
+
+    // 3. "magnify" enables magnifier locally without calling ask()
+    await emitTranscript("magnify");
+    expect(mocks.invoke).toHaveBeenCalledWith("toggle_magnify", {
+      on: true,
+      enabled: true,
+      magnify: true,
+    });
+    expect(mocks.invoke).not.toHaveBeenCalledWith("ask", expect.anything());
+
+    // 4. "next step" advances to step 2 locally without calling ask()
+    await emitTranscript("next step");
+    await waitFor(() => {
+      expect(screen.getByTestId("step-counter")).toHaveTextContent("Step 2/2");
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("next_step");
+    expect(mocks.invoke).not.toHaveBeenCalledWith("ask", expect.anything());
+
+    // 5. "mute" mutes TTS locally without calling ask()
+    await emitTranscript("mute");
+    await waitFor(() => {
+      expect(screen.getByTestId("tts-mute-toggle")).toHaveAttribute("aria-pressed", "false");
+    });
+    expect(mocks.invoke).not.toHaveBeenCalledWith("ask", expect.anything());
+
+    // 6. "stop" clears overlay locally without calling ask()
+    await emitTranscript("stop");
+    await waitFor(() => {
+      expect(screen.queryByTestId("response-block")).toBeNull();
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("clear_overlay");
+    expect(mocks.invoke).not.toHaveBeenCalledWith("ask", expect.anything());
+  });
+
+  it("runs Groq Whisper VAD loop on cloud STT and discards chunks if pausedForTts triggers", async () => {
+    vi.useFakeTimers();
+
+    let currentRmsSample = 0;
+    const stopTrackMock = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [{ stop: stopTrackMock }],
+        })),
+      },
+    });
+
+    class FakeAudioContext {
+      state = "running";
+      createMediaStreamSource = vi.fn(() => ({
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+      }));
+      createAnalyser = vi.fn(() => ({
+        fftSize: 64,
+        getFloatTimeDomainData: (buf: Float32Array) => {
+          buf.fill(currentRmsSample);
+        },
+      }));
+      resume = vi.fn(async () => {});
+      close = vi.fn(async () => {});
+    }
+
+    const recorderInstances: FakeMediaRecorder[] = [];
+    class FakeMediaRecorder {
+      state: "inactive" | "recording" = "inactive";
+      ondataavailable: ((ev: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      constructor(_stream: MediaStream) {
+        recorderInstances.push(this);
+      }
+      start = vi.fn(() => {
+        this.state = "recording";
+      });
+      stop = vi.fn(() => {
+        if (this.state === "inactive") return;
+        this.state = "inactive";
+        const chunk = {
+          size: 4,
+          arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+        } as unknown as Blob;
+        // Wrap in real Blob-like object for chunks
+        this.ondataavailable?.({ data: new Blob([new Uint8Array([1, 2, 3, 4])], { type: "audio/webm" }) });
+        void chunk;
+        this.onstop?.();
+      });
+    }
+
+    // Ensure Blob.prototype.arrayBuffer exists in jsdom
+    if (typeof Blob.prototype.arrayBuffer !== "function") {
+      Blob.prototype.arrayBuffer = function () {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as ArrayBuffer);
+          reader.readAsArrayBuffer(this);
+        });
+      };
+    }
+
+    (window as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
+    (window as unknown as { MediaRecorder: unknown }).MediaRecorder = FakeMediaRecorder;
+
+    render(
+      <FloatingBar
+        initialSettings={{
+          onboarding_complete: true,
+          voice_enabled: true,
+          stt_engine: "cloud",
+          voice_conversation_mode: true,
+          tts_enabled: true,
+          tts_auto_speak: false,
+        }}
+      />,
+    );
+
+    // Flush getUserMedia promise
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Silence initially -> no recorder started yet
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(recorderInstances.length).toBe(0);
+
+    // Speech onset (RMS 0.1 > 0.02 threshold)
+    currentRmsSample = 0.1;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(70);
+    });
+    expect(recorderInstances.length).toBe(1);
+    expect(recorderInstances[0].state).toBe("recording");
+
+    // 1.3s of silence stops chunk and transcribes via Groq cloud STT
+    currentRmsSample = 0;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1350);
+    });
+    expect(recorderInstances[0].stop).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "transcribe",
+      expect.objectContaining({ engine: "cloud" }),
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "ask",
+      expect.objectContaining({ query: "how do I export" }),
+    );
+
+    // Second utterance interrupted by TTS speaking -> must discard without transcribing
+    mocks.invoke.mockClear();
+    currentRmsSample = 0.1;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(70);
+    });
+    expect(recorderInstances.length).toBe(2);
+
+    await act(async () => {
+      mocks.voiceEngine.emitState({ status: "speaking", speaking: true });
+    });
+    expect(recorderInstances[1].stop).toHaveBeenCalled();
+    expect(mocks.invoke).not.toHaveBeenCalledWith("transcribe", expect.anything());
   });
 });

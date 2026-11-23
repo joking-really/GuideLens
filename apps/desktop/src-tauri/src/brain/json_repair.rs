@@ -394,6 +394,7 @@ pub fn repair_value_to_step_plan(root: &Value) -> Result<StepPlan, String> {
         let control_type = clean_opt_string(obj.get("control_type"), 60);
         let shortcut = clean_opt_string(obj.get("shortcut"), 40);
         let explanation = clean_opt_string(obj.get("explanation"), MAX_INSTRUCTION_CHARS);
+        let spoken_text = clean_opt_string(obj.get("spoken_text"), MAX_INSTRUCTION_CHARS);
 
         let step_number = (steps.len() + 1) as u32;
         steps.push(Step {
@@ -406,6 +407,7 @@ pub fn repair_value_to_step_plan(root: &Value) -> Result<StepPlan, String> {
             shortcut,
             terminal_command,
             explanation,
+            spoken_text,
         });
     }
 
@@ -549,5 +551,50 @@ Hope this helps!"#;
             plan.steps[0].terminal_command.as_deref(),
             Some("git reset --soft HEAD~1")
         );
+    }
+
+    #[test]
+    fn repairs_and_clamps_optional_spoken_text() {
+        let long_spoken = "Click the super deeply nested settings button that I just highlighted over on the far right side of the configuration pane so we can open options right away.";
+        assert!(long_spoken.chars().count() > MAX_INSTRUCTION_CHARS);
+
+        let raw = format!(
+            r#"```json
+            {{
+                "mode": "guide",
+                "steps": [
+                    {{
+                        "instruction_line": "Click File.",
+                        "spoken_text": "  Click File   at the top left\n  to open the menu.  ",
+                        "confidence": 0.9
+                    }},
+                    {{
+                        "instruction_line": "Click Settings.",
+                        "spoken_text": "{}",
+                        "confidence": 0.9
+                    }},
+                    {{
+                        "instruction_line": "Click Save.",
+                        "spoken_text": "   ",
+                        "confidence": 0.9
+                    }}
+                ]
+            }}
+            ```"#,
+            long_spoken
+        );
+
+        let plan = parse_and_repair_step_plan(&raw).expect("repaired spoken_text plan");
+        assert_eq!(
+            plan.steps[0].spoken_text.as_deref(),
+            Some("Click File at the top left to open the menu.")
+        );
+        let clamped = plan.steps[1]
+            .spoken_text
+            .as_deref()
+            .expect("clamped spoken_text");
+        assert_eq!(clamped.chars().count(), MAX_INSTRUCTION_CHARS);
+        assert!(clamped.ends_with('…'));
+        assert_eq!(plan.steps[2].spoken_text, None);
     }
 }

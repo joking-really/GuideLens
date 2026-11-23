@@ -21,6 +21,11 @@ export interface ResponseBlockProps {
   totalSteps: number;
   magnify: boolean;
   highContrast: boolean;
+  ttsEnabled?: boolean;
+  isSpeaking?: boolean;
+  onReplaySpeech?: () => void;
+  onStopSpeech?: () => void;
+  onOpenVoiceStudio?: () => void;
   onToggleMagnify: (next: boolean) => void;
   onNextStep: () => void;
   onClose: () => void;
@@ -37,6 +42,11 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
   totalSteps,
   magnify,
   highContrast,
+  ttsEnabled,
+  isSpeaking = false,
+  onReplaySpeech,
+  onStopSpeech,
+  onOpenVoiceStudio,
   onToggleMagnify,
   onNextStep,
   onClose,
@@ -255,6 +265,56 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
             Magnify {magnify ? "On" : "Off"}
           </button>
 
+          {(onReplaySpeech ||
+            onStopSpeech ||
+            isSpeaking ||
+            ttsEnabled !== undefined) &&
+            (isSpeaking ? (
+              <button
+                type="button"
+                onClick={() => onStopSpeech?.()}
+                aria-label="Stop speaking"
+                title="Stop spoken guidance"
+                data-testid="stop-speech-btn"
+                className="flex items-center gap-1 px-2 py-0.5 rounded border bg-rose-500/15 text-rose-300 border-rose-500/40 hover:bg-rose-500/25 font-medium transition-colors"
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-sm bg-current"
+                  aria-hidden="true"
+                />
+                <span>Stop</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onReplaySpeech?.()}
+                aria-label="Speak step aloud"
+                title="Speak or replay this step"
+                data-testid="replay-speech-btn"
+                className={`flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
+                  ttsEnabled
+                    ? "bg-[#38BDF8]/15 text-[#38BDF8] border-[#38BDF8]/40 hover:bg-[#38BDF8]/25"
+                    : "bg-white/5 text-[#A1A1AA] border-white/10 hover:text-[#F4F4F5]"
+                }`}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                </svg>
+                <span>Speak</span>
+              </button>
+            ))}
+
           <span
             aria-label={`Step ${displayStepNum} of ${displayTotal}`}
             data-testid="step-counter"
@@ -265,6 +325,18 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {onOpenVoiceStudio && (
+            <button
+              type="button"
+              onClick={onOpenVoiceStudio}
+              aria-label="Open Voice Studio"
+              title="Open Voice Studio"
+              data-testid="response-voice-studio-btn"
+              className="px-1.5 py-0.5 rounded bg-white/5 text-[#A1A1AA] border border-white/10 hover:text-[#38BDF8] hover:border-[#38BDF8]/40 transition-colors"
+            >
+              Voice
+            </button>
+          )}
           {displayStepNum < displayTotal && (
             <button
               type="button"

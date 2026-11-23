@@ -269,6 +269,7 @@ async fn highlight_handler(
         shortcut: None,
         terminal_command: None,
         explanation: None,
+        spoken_text: None,
         rect_px,
         source: StepSource::Vlm,
     };

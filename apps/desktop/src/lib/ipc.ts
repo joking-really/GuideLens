@@ -26,11 +26,13 @@ import {
   type OllamaStatus,
   type ResolvedStep,
   type Settings,
+  type SettingsTab,
   type Step,
   type StepChangedPayload,
   type StepMode,
   type StepPlan,
   type SttEngine,
+  type TinyVocaVoice,
 } from "../types";
 import { normalizedToPhysical } from "./overlayGeometry";
 
@@ -81,6 +83,10 @@ function normalizeStep(raw: unknown, idx: number): Step {
     explanation:
       typeof obj.explanation === "string"
         ? clampInstruction(obj.explanation)
+        : null,
+    spoken_text:
+      typeof obj.spoken_text === "string" && obj.spoken_text.trim().length > 0
+        ? clampInstruction(obj.spoken_text)
         : null,
   };
 }
@@ -298,26 +304,58 @@ export async function toggleMagnify(on: boolean): Promise<void> {
   await invoke("toggle_magnify", { on, enabled: on, magnify: on });
 }
 
+function normalizeTtsVoice(value: unknown): TinyVocaVoice {
+  return value === "F2" || value === "M2" ? value : DEFAULT_SETTINGS.tts_voice;
+}
+
+function normalizeSettings(
+  raw: unknown,
+  fallbackPos: { x: number; y: number } | null = null,
+): Settings {
+  const obj = isRecord(raw) ? raw : {};
+  const barPos = isRecord(obj.bar_position)
+    ? {
+        x: Number(obj.bar_position.x) || 0,
+        y: Number(obj.bar_position.y) || 0,
+      }
+    : fallbackPos;
+
+  return {
+    ...DEFAULT_SETTINGS,
+    ...(obj as Partial<Settings>),
+    tts_enabled:
+      typeof obj.tts_enabled === "boolean"
+        ? obj.tts_enabled
+        : DEFAULT_SETTINGS.tts_enabled,
+    tts_voice: normalizeTtsVoice(obj.tts_voice),
+    tts_speed:
+      typeof obj.tts_speed === "number" && Number.isFinite(obj.tts_speed)
+        ? obj.tts_speed
+        : DEFAULT_SETTINGS.tts_speed,
+    tts_pitch_shift:
+      typeof obj.tts_pitch_shift === "number" &&
+      Number.isFinite(obj.tts_pitch_shift)
+        ? obj.tts_pitch_shift
+        : DEFAULT_SETTINGS.tts_pitch_shift,
+    tts_auto_speak:
+      typeof obj.tts_auto_speak === "boolean"
+        ? obj.tts_auto_speak
+        : DEFAULT_SETTINGS.tts_auto_speak,
+    voice_conversation_mode:
+      typeof obj.voice_conversation_mode === "boolean"
+        ? obj.voice_conversation_mode
+        : DEFAULT_SETTINGS.voice_conversation_mode,
+    bar_position: barPos,
+  };
+}
+
 export async function getSettings(): Promise<Settings> {
+  const savedPos = readSavedBarPosition();
   try {
     const raw = await invoke<Partial<Settings>>("get_settings");
-    const savedPos = readSavedBarPosition();
-    return {
-      ...DEFAULT_SETTINGS,
-      ...(isRecord(raw) ? raw : {}),
-      bar_position:
-        (isRecord(raw) && isRecord(raw.bar_position)
-          ? {
-              x: Number(raw.bar_position.x) || 0,
-              y: Number(raw.bar_position.y) || 0,
-            }
-          : null) ?? savedPos,
-    };
+    return normalizeSettings(raw, savedPos);
   } catch {
-    return {
-      ...DEFAULT_SETTINGS,
-      bar_position: readSavedBarPosition(),
-    };
+    return normalizeSettings(null, savedPos);
   }
 }
 
@@ -601,6 +639,13 @@ export function onStepChanged(
     const index = typeof raw.index === "number" ? raw.index : 0;
     const total = typeof raw.total === "number" && raw.total > 0 ? raw.total : 1;
     const step = normalizeResolvedStep(raw.step ?? raw, index, monitor);
+    if (
+      !step.spoken_text &&
+      typeof raw.spoken_text === "string" &&
+      raw.spoken_text.trim().length > 0
+    ) {
+      step.spoken_text = clampInstruction(raw.spoken_text);
+    }
     const mode: StepMode =
       raw.mode === "terminal" || step.terminal_command
         ? "terminal"
@@ -678,28 +723,45 @@ export function onBarSummoned(handler: () => void): Promise<UnlistenFn> {
   });
 }
 
+const VALID_SETTINGS_TABS: readonly SettingsTab[] = [
+  "brains",
+  "voice",
+  "account",
+  "privacy",
+  "history",
+];
+
+function parseSettingsTab(value: unknown): SettingsTab | undefined {
+  return typeof value === "string" &&
+    (VALID_SETTINGS_TABS as readonly string[]).includes(value)
+    ? (value as SettingsTab)
+    : undefined;
+}
+
 export function onSettingsChanged(
   handler: (settings: Settings) => void,
 ): Promise<UnlistenFn> {
   return listen<Partial<Settings>>("settings-changed", (event) => {
-    const raw = isRecord(event.payload) ? event.payload : {};
-    handler({
-      ...DEFAULT_SETTINGS,
-      ...(raw as Partial<Settings>),
-    });
+    handler(normalizeSettings(event.payload, readSavedBarPosition()));
   });
 }
 
 export function onSettingsRoute(
-  handler: (route: "/settings" | "/onboarding") => void,
+  handler: (payload: {
+    route: "/settings" | "/onboarding";
+    tab?: SettingsTab;
+  }) => void,
 ): Promise<UnlistenFn> {
-  return listen<{ route?: unknown }>("settings-route", (event) => {
-    const route =
-      isRecord(event.payload) && event.payload.route === "/onboarding"
-        ? "/onboarding"
-        : "/settings";
-    handler(route);
-  });
+  return listen<{ route?: unknown; tab?: unknown }>(
+    "settings-route",
+    (event) => {
+      const rawPayload = isRecord(event.payload) ? event.payload : {};
+      const route =
+        rawPayload.route === "/onboarding" ? "/onboarding" : "/settings";
+      const tab = parseSettingsTab(rawPayload.tab);
+      handler(tab ? { route, tab } : { route });
+    },
+  );
 }
 
 // ============================================================================
@@ -741,21 +803,31 @@ export async function openExternalUrl(url: string): Promise<void> {
 
 export async function openSettingsWindow(
   route: "/settings" | "/onboarding" = "/settings",
+  tab?: SettingsTab,
 ): Promise<boolean> {
+  const validTab = parseSettingsTab(tab);
+  const windowUrl = validTab
+    ? `${route}?tab=${encodeURIComponent(validTab)}`
+    : route;
+  const windowTitle =
+    route === "/onboarding"
+      ? "Welcome to GuideLens"
+      : validTab === "voice"
+        ? "GuideLens Voice Studio"
+        : "GuideLens Settings & History";
   try {
     const existing = await WebviewWindow.getByLabel("settings");
     if (existing) {
       try {
-        await existing.emit("settings-route", { route });
+        await existing.emit(
+          "settings-route",
+          validTab ? { route, tab: validTab } : { route },
+        );
       } catch {
         // Ignore if event emission is unavailable
       }
       try {
-        await existing.setTitle(
-          route === "/onboarding"
-            ? "Welcome to GuideLens"
-            : "GuideLens Settings & History",
-        );
+        await existing.setTitle(windowTitle);
       } catch {
         // Ignore if setTitle is denied by capability
       }
@@ -769,11 +841,8 @@ export async function openSettingsWindow(
       return true;
     }
     const win = new WebviewWindow("settings", {
-      url: route,
-      title:
-        route === "/onboarding"
-          ? "Welcome to GuideLens"
-          : "GuideLens Settings & History",
+      url: windowUrl,
+      title: windowTitle,
       width: 780,
       height: 640,
       minWidth: 640,

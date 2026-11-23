@@ -93,15 +93,27 @@ pub fn match_app_profile(active_exe: &str, window_title: &str) -> Option<&'stati
         }
     }
 
-    // 1. Exact or substring match against executable patterns (excluding generic browser fallback first)
+    // 1. Exact match first, then substring match against executable patterns (excluding generic browser fallback first)
     if !exe_base.is_empty() {
+        for profile in profiles {
+            if profile.id == "chrome" {
+                continue;
+            }
+            if profile
+                .exe_patterns
+                .iter()
+                .any(|pat| exe_base == pat.to_ascii_lowercase())
+            {
+                return Some(profile);
+            }
+        }
         for profile in profiles {
             if profile.id == "chrome" {
                 continue;
             }
             if profile.exe_patterns.iter().any(|pat| {
                 let pat_l = pat.to_ascii_lowercase();
-                exe_base == pat_l || exe_base.contains(&pat_l)
+                exe_base.contains(&pat_l)
             }) {
                 return Some(profile);
             }
@@ -162,7 +174,8 @@ REQUIRED JSON SCHEMA (StepPlan):
       "confidence": 0.92,
       "shortcut": "W",
       "terminal_command": null,
-      "explanation": null
+      "explanation": null,
+      "spoken_text": "Click the Object Selection Tool I highlighted on the left."
     }
   ]
 }
@@ -174,7 +187,8 @@ STRICT RULES:
 4. Set `confidence` between 0.0 and 1.0 reflecting how certain you are of the control's location on screen. If the target control is not visible or confidence is below 0.5, set `"bbox": null` and explain what to do in `instruction_line`.
 5. When the active app is a terminal/CLI or the user asks for a shell/git/CLI command, set `"mode": "terminal"`, populate `"terminal_command"` with the exact copy-ready command string, and populate `"explanation"` with a 1-line plain-English explanation (<= 140 chars).
 6. When the user only asks a conceptual question with no UI click or command needed, set `"mode": "explain"` and `"bbox": null`.
-7. Keep `total_steps` equal to `steps.length` (usually 1 to 4 focused steps)."#;
+7. Keep `total_steps` equal to `steps.length` (usually 1 to 4 focused steps).
+8. `spoken_text` MUST be a short, natural, friendly spoken coaching cue (<= 140 chars) written as if sitting next to the user pointing at the highlighted screen element (e.g., "Click the Object Selection Tool I highlighted on the left."). Never include raw terminal commands, markdown, URLs, or noisy symbols in `spoken_text` — in terminal mode, simply explain what the command in the bar does so the user can copy and run it."#;
 
 /// Builds the full system prompt tailored to the active application and window title.
 pub fn build_system_prompt(active_exe: &str, window_title: &str) -> String {
@@ -337,5 +351,7 @@ mod tests {
         assert!(user_prompt.contains("2560x1440"));
         assert!(user_prompt.contains("terminal_mode=true"));
         assert!(user_prompt.contains("Undo commit"));
+        assert!(ps_prompt.contains("\"spoken_text\""));
+        assert!(ps_prompt.contains("8. `spoken_text` MUST be a short"));
     }
 }

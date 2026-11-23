@@ -23,6 +23,8 @@ export interface Step {
   terminal_command?: string | null;
   /** Single-line plain-English explanation */
   explanation?: string | null;
+  /** Optional conversational speech cue for offline TTS (<= 140 chars) */
+  spoken_text?: string | null;
 }
 
 export interface StepPlan {
@@ -64,6 +66,10 @@ export type ApiProvider =
 export type AgentId = "claude" | "codex" | "gemini" | "agy" | "hermes";
 
 export type SttEngine = "web_speech" | "whisper_cpp" | "cloud";
+
+export type TinyVocaVoice = "M2" | "F2";
+
+export type SettingsTab = "brains" | "voice" | "account" | "privacy" | "history";
 
 export interface MonitorInfo {
   x: number;
@@ -141,6 +147,12 @@ export interface Settings {
   ollama_model: string;
   stt_engine: SttEngine;
   voice_enabled: boolean;
+  tts_enabled: boolean;
+  tts_voice: TinyVocaVoice;
+  tts_speed: number;
+  tts_pitch_shift: number;
+  tts_auto_speak: boolean;
+  voice_conversation_mode: boolean;
   high_contrast: boolean;
   always_magnify: boolean;
   capture_retention_days: number;
@@ -207,6 +219,12 @@ export const DEFAULT_SETTINGS: Settings = {
   ollama_model: "qwen2.5vl:3b",
   stt_engine: "web_speech",
   voice_enabled: false,
+  tts_enabled: true,
+  tts_voice: "M2",
+  tts_speed: 1.0,
+  tts_pitch_shift: 0.0,
+  tts_auto_speak: true,
+  voice_conversation_mode: true,
   high_contrast: false,
   always_magnify: false,
   capture_retention_days: 7,

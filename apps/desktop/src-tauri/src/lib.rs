@@ -61,13 +61,38 @@ fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to copy to clipboard: {}", e))
 }
 
+fn open_settings_tab(app: &AppHandle, tab: &str, title: &str) {
+    if let Some(win) = app.get_webview_window("settings") {
+        let _ = tauri::Emitter::emit(
+            app,
+            "settings-route",
+            serde_json::json!({ "route": "/settings", "tab": tab }),
+        );
+        let _ = win.set_title(title);
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_hide = MenuItem::with_id(app, "toggle_bar", "Show / Hide Bar", true, None::<&str>)?;
     let open_settings =
         MenuItem::with_id(app, "open_settings", "Settings & History", true, None::<&str>)?;
+    let open_voice_studio =
+        MenuItem::with_id(app, "open_voice_studio", "Voice Studio", true, None::<&str>)?;
     let clear_item = MenuItem::with_id(app, "clear_overlay", "Clear Overlay", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit GuideLens", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_hide, &open_settings, &clear_item, &quit_item])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show_hide,
+            &open_settings,
+            &open_voice_studio,
+            &clear_item,
+            &quit_item,
+        ],
+    )?;
 
     let mut builder = TrayIconBuilder::new()
         .menu(&menu)
@@ -84,19 +109,8 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         })
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle_bar" => input::toggle_bar_window(app),
-            "open_settings" => {
-                if let Some(win) = app.get_webview_window("settings") {
-                    let _ = tauri::Emitter::emit(
-                        app,
-                        "settings-route",
-                        serde_json::json!({ "route": "/settings" }),
-                    );
-                    let _ = win.set_title("GuideLens Settings & History");
-                    let _ = win.unminimize();
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
-            }
+            "open_settings" => open_settings_tab(app, "brains", "GuideLens Settings & History"),
+            "open_voice_studio" => open_settings_tab(app, "voice", "GuideLens Voice Studio"),
             "clear_overlay" => {
                 let _ = overlay::clear_overlay_state(app);
             }

@@ -19,6 +19,9 @@ import {
   toggleMagnify,
   writeSavedBarPosition,
 } from "../lib/ipc";
+import { isValidHighlightTarget } from "../lib/overlayGeometry";
+import { formatErrorForSpeech, formatStepForSpeech, matchVoiceCommand } from "../lib/speechText";
+import { getCopilotVoiceEngine, type TinyVocaState } from "../lib/tinyVocaClient";
 import {
   type AskError,
   type BrainKind,
@@ -28,6 +31,7 @@ import {
   formatBrainPillLabel,
   type ResolvedStep,
   type Settings,
+  type SettingsTab,
   type StepMode,
 } from "../types";
 import { OnboardingView } from "./OnboardingView";
@@ -52,6 +56,14 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
   initialSettings,
   showOnboardingInitially = false,
 }) => {
+  const voiceEngineRef = useRef<ReturnType<typeof getCopilotVoiceEngine> | null>(
+    null,
+  );
+  if (!voiceEngineRef.current) {
+    voiceEngineRef.current = getCopilotVoiceEngine();
+  }
+  const voiceEngine = voiceEngineRef.current;
+
   const [settings, setLocalSettings] = useState<Settings>({
     ...DEFAULT_SETTINGS,
     onboarding_complete: !showOnboardingInitially,
@@ -61,6 +73,9 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     showOnboardingInitially,
   );
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false);
+  const [settingsDrawerTab, setSettingsDrawerTab] =
+    useState<SettingsTab>("brains");
+  const [settingsDrawerTabSeq, setSettingsDrawerTabSeq] = useState(0);
 
   const [query, setQuery] = useState("");
   const [lastSubmittedQuery, setLastSubmittedQuery] = useState("");
@@ -77,9 +92,18 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
   const [totalSteps, setTotalSteps] = useState(0);
   const [magnify, setMagnify] = useState(false);
 
+  const [voiceState, setVoiceState] = useState<TinyVocaState>(() =>
+    voiceEngine.getState(),
+  );
+
   const inputRef = useRef<HTMLInputElement | null>(null);
   const latestSettingsRef = useRef<Settings>(settings);
   latestSettingsRef.current = settings;
+
+  const lastSpokenKeyRef = useRef<string | null>(null);
+  const lastSpokenErrorRef = useRef<string | null>(null);
+
+  const isSpeaking = voiceState.speaking;
 
   const focusInput = useCallback(() => {
     inputRef.current?.focus();
@@ -89,6 +113,27 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
   useEffect(() => {
     focusInput();
   }, [focusInput]);
+
+  useEffect(() => {
+    setVoiceState(voiceEngine.getState());
+    const unsubscribe = voiceEngine.subscribe((next) => {
+      setVoiceState(next);
+    });
+    return () => {
+      unsubscribe();
+      voiceEngine.stop();
+    };
+  }, [voiceEngine]);
+
+  useEffect(() => {
+    if (!settings.tts_enabled) {
+      return;
+    }
+    const warmTimer = window.setTimeout(() => {
+      void voiceEngine.load().catch(() => {});
+    }, 300);
+    return () => window.clearTimeout(warmTimer);
+  }, [settings.tts_enabled, voiceEngine]);
 
   useEffect(() => {
     let mounted = true;
@@ -186,6 +231,9 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
 
     const unlistenClear = onOverlayCleared(() => {
       if (!mounted) return;
+      voiceEngine.stop();
+      lastSpokenKeyRef.current = null;
+      lastSpokenErrorRef.current = null;
       setLoading(false);
       setError(null);
       setSteps([]);
@@ -197,6 +245,9 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
       if (!mounted || initialSettings) return;
       setLocalSettings(updated);
       setMagnify(Boolean(updated.always_magnify));
+      if (!updated.tts_enabled) {
+        voiceEngine.stop();
+      }
     });
 
     return () => {
@@ -211,7 +262,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
       unlistenClear.then((fn) => fn()).catch(() => {});
       unlistenSettings.then((fn) => fn()).catch(() => {});
     };
-  }, [focusInput, initialSettings]);
+  }, [focusInput, initialSettings, voiceEngine]);
 
   const currentStep: ResolvedStep | null = steps[stepIndex] ?? null;
   const isResponseExpanded =
@@ -229,7 +280,83 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     }
   }, [isResponseExpanded, showSettingsDrawer, showOnboarding]);
 
+  const speakCue = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const active = latestSettingsRef.current;
+      voiceEngine.stop();
+      void voiceEngine
+        .speak(trimmed, {
+          voice: active.tts_voice,
+          speed: active.tts_speed,
+          pitchShift: active.tts_pitch_shift,
+        })
+        .catch(() => {});
+    },
+    [voiceEngine],
+  );
+
+  const speakStep = useCallback(
+    (
+      step: ResolvedStep,
+      idx: number,
+      total: number,
+      stepMode: StepMode,
+    ) => {
+      const displayTotal = Math.max(total, idx + 1);
+      const cue = formatStepForSpeech(step, {
+        mode: stepMode,
+        index: idx,
+        total: displayTotal,
+        hasHighlight: isValidHighlightTarget(step),
+      });
+      speakCue(cue);
+    },
+    [speakCue],
+  );
+
+  // Deduplicated conversational TTS when a step arrives or advances
+  const currentStepKey = currentStep
+    ? `${stepIndex}:${Math.max(totalSteps, stepIndex + 1)}:${currentStep.instruction_line}:${currentStep.spoken_text ?? ""}`
+    : null;
+
+  useEffect(() => {
+    if (loading || !currentStep || !currentStepKey) {
+      return;
+    }
+    const active = latestSettingsRef.current;
+    if (!active.tts_enabled || !active.tts_auto_speak) {
+      return;
+    }
+    if (lastSpokenKeyRef.current === currentStepKey) {
+      return;
+    }
+    lastSpokenKeyRef.current = currentStepKey;
+    speakStep(currentStep, stepIndex, totalSteps, mode);
+  }, [loading, currentStep, currentStepKey, stepIndex, totalSteps, mode, speakStep]);
+
+  // Speak concise error cues when TTS auto-speak is active
+  useEffect(() => {
+    if (loading || !error) {
+      return;
+    }
+    const active = latestSettingsRef.current;
+    if (!active.tts_enabled || !active.tts_auto_speak) {
+      return;
+    }
+    const errKey = `${error.code}:${error.brain ?? ""}:${error.message}`;
+    if (lastSpokenErrorRef.current === errKey) {
+      return;
+    }
+    lastSpokenErrorRef.current = errKey;
+    speakCue(formatErrorForSpeech(error));
+  }, [loading, error, speakCue]);
+
   const handleCloseResponse = useCallback(async () => {
+    voiceEngine.stop();
+    lastSpokenKeyRef.current = null;
+    lastSpokenErrorRef.current = null;
     setLoading(false);
     setError(null);
     setSteps([]);
@@ -240,7 +367,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     } catch {
       // Ignore outside Tauri
     }
-  }, []);
+  }, [voiceEngine]);
 
   const handleNextStep = useCallback(async () => {
     if (steps.length === 0) return;
@@ -271,6 +398,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
       if (e.key === "Escape") {
         e.preventDefault();
         if (showSettingsDrawer) {
+          voiceEngine.stop();
           setShowSettingsDrawer(false);
           return;
         }
@@ -313,6 +441,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     query,
     lastSubmittedQuery,
     showSettingsDrawer,
+    voiceEngine,
     handleCloseResponse,
     handleNextStep,
   ]);
@@ -321,6 +450,9 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     async (textToAsk: string, brainOverride?: BrainKind) => {
       const trimmed = textToAsk.trim();
       if (!trimmed) return;
+      voiceEngine.stop();
+      lastSpokenKeyRef.current = null;
+      lastSpokenErrorRef.current = null;
       setLastSubmittedQuery(trimmed);
       setLoading(true);
       setError(null);
@@ -345,7 +477,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
         setError(err as AskError);
       }
     },
-    [settings.brain_mode],
+    [settings.brain_mode, voiceEngine],
   );
 
   const handleFormSubmit = (e: React.FormEvent) => {
@@ -395,36 +527,127 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     }
   };
 
-  const handleVoiceTranscript = useCallback(
-    (transcript: string, isFinal: boolean) => {
-      setQuery(transcript);
-      if (isFinal && transcript.trim()) {
-        void submitQuery(transcript);
-      }
-    },
-    [submitQuery],
-  );
+  const handleToggleTts = async () => {
+    if (isSpeaking || settings.tts_enabled) {
+      voiceEngine.stop();
+    }
+    const nextEnabled = !settings.tts_enabled;
+    const updated: Settings = {
+      ...latestSettingsRef.current,
+      tts_enabled: nextEnabled,
+    };
+    setLocalSettings(updated);
+    if (nextEnabled) {
+      void voiceEngine.load().catch(() => {});
+    }
+    try {
+      await setSettings(updated);
+    } catch {
+      // Ignore error outside Tauri
+    }
+  };
 
-  const handleToggleMagnify = async (nextMag: boolean) => {
+  const handleMuteTts = useCallback(async () => {
+    voiceEngine.stop();
+    const updated: Settings = {
+      ...latestSettingsRef.current,
+      tts_enabled: false,
+    };
+    setLocalSettings(updated);
+    try {
+      await setSettings(updated);
+    } catch {
+      // Ignore error outside Tauri
+    }
+  }, [voiceEngine]);
+
+  const handleToggleMagnify = useCallback(async (nextMag: boolean) => {
     setMagnify(nextMag);
     try {
       await toggleMagnify(nextMag);
     } catch {
       // Ignore error outside Tauri
     }
-  };
+  }, []);
+
+  const handleVoiceTranscript = useCallback(
+    (transcript: string, isFinal: boolean) => {
+      if (!isFinal) {
+        setQuery(transcript);
+        return;
+      }
+
+      const trimmed = transcript.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const command = matchVoiceCommand(trimmed, Boolean(currentStep));
+      if (command) {
+        setQuery("");
+        switch (command) {
+          case "next_step":
+            void handleNextStep();
+            break;
+          case "repeat":
+            if (currentStep) {
+              speakStep(currentStep, stepIndex, totalSteps, mode);
+            }
+            break;
+          case "magnify_on":
+            void handleToggleMagnify(true);
+            break;
+          case "magnify_off":
+            void handleToggleMagnify(false);
+            break;
+          case "stop_clear":
+            void handleCloseResponse();
+            break;
+          case "mute_tts":
+            void handleMuteTts();
+            break;
+        }
+        return;
+      }
+
+      setQuery(trimmed);
+      voiceEngine.stop();
+      void submitQuery(trimmed);
+    },
+    [
+      currentStep,
+      stepIndex,
+      totalSteps,
+      mode,
+      handleNextStep,
+      speakStep,
+      handleToggleMagnify,
+      handleCloseResponse,
+      handleMuteTts,
+      voiceEngine,
+      submitQuery,
+    ],
+  );
 
   const handleFallback = (fallbackBrain: BrainKind) => {
     const targetQuery = lastSubmittedQuery || query || "Help with active screen";
     void submitQuery(targetQuery, fallbackBrain);
   };
 
-  const handleOpenSettings = async () => {
+  const handleOpenSettings = async (tab?: SettingsTab) => {
     const openedWindow = isTauriRuntime()
-      ? await openSettingsWindow("/settings")
+      ? await openSettingsWindow("/settings", tab)
       : false;
     if (!openedWindow) {
-      setShowSettingsDrawer((prev) => !prev);
+      if (tab) {
+        setSettingsDrawerTab(tab);
+        setSettingsDrawerTabSeq((n) => n + 1);
+        setShowSettingsDrawer(true);
+      } else {
+        setSettingsDrawerTab("brains");
+        setSettingsDrawerTabSeq((n) => n + 1);
+        setShowSettingsDrawer((prev) => !prev);
+      }
     }
   };
 
@@ -494,18 +717,89 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
         <VoiceIndicator
           voiceEnabled={settings.voice_enabled}
           sttEngine={settings.stt_engine}
+          pausedForTts={settings.voice_conversation_mode && isSpeaking}
+          speaking={isSpeaking}
           onToggleMute={(next) => void handleToggleVoice(next)}
           onTranscript={handleVoiceTranscript}
         />
 
-        {/* 4. Settings / History Gear Icon */}
+        {/* 4. Speaker Mute/Unmute Toggle */}
+        <button
+          type="button"
+          onClick={() => void handleToggleTts()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            void handleOpenSettings("voice");
+          }}
+          aria-label={
+            settings.tts_enabled
+              ? "Mute spoken guidance"
+              : "Enable spoken guidance"
+          }
+          aria-pressed={settings.tts_enabled}
+          title={
+            isSpeaking
+              ? "Speaking — click to stop & mute (right-click for Voice Studio)"
+              : settings.tts_enabled
+                ? "Voice guidance on (click to mute, right-click for Voice Studio)"
+                : "Voice guidance muted (click to enable, right-click for Voice Studio)"
+          }
+          data-testid="tts-mute-toggle"
+          className={`relative shrink-0 flex items-center justify-center w-7 h-7 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8] ${
+            settings.tts_enabled
+              ? "text-[#38BDF8] bg-[#38BDF8]/15 hover:bg-[#38BDF8]/25"
+              : "text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/5"
+          }`}
+        >
+          {isSpeaking && (
+            <span
+              data-testid="tts-speaking-pulse"
+              className="absolute inset-0 rounded-md ring-1 ring-[#38BDF8]/70 animate-ping pointer-events-none"
+            />
+          )}
+          {settings.tts_enabled ? (
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+            </svg>
+          ) : (
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <line x1="22" x2="16" y1="9" y2="15" />
+              <line x1="16" x2="22" y1="9" y2="15" />
+            </svg>
+          )}
+        </button>
+
+        {/* 5. Settings / History Gear Icon */}
         <button
           type="button"
           onClick={() => void handleOpenSettings()}
           aria-label="Open Settings and History"
           data-testid="open-settings-btn"
           title="Settings & Session History"
-          className="flex items-center justify-center w-7 h-7 rounded-md text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/5 transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8]"
+          className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/5 transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8]"
         >
           <svg
             width="15"
@@ -535,6 +829,15 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
         totalSteps={totalSteps}
         magnify={magnify}
         highContrast={settings.high_contrast}
+        ttsEnabled={settings.tts_enabled}
+        isSpeaking={isSpeaking}
+        onReplaySpeech={() => {
+          if (currentStep) {
+            speakStep(currentStep, stepIndex, totalSteps, mode);
+          }
+        }}
+        onStopSpeech={() => voiceEngine.stop()}
+        onOpenVoiceStudio={() => void handleOpenSettings("voice")}
         onToggleMagnify={(next) => void handleToggleMagnify(next)}
         onNextStep={() => void handleNextStep()}
         onClose={() => void handleCloseResponse()}
@@ -559,6 +862,8 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
         <div className="mt-2 w-[760px] max-w-[95vw]">
           <SettingsView
             initialSettings={settings}
+            initialTab={settingsDrawerTab}
+            tabSyncSeq={settingsDrawerTabSeq}
             onSettingsChange={(updated) => setLocalSettings(updated)}
             onClose={() => setShowSettingsDrawer(false)}
           />

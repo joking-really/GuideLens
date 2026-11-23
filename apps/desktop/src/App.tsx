@@ -8,11 +8,25 @@ import {
   getSettings,
   onSettingsRoute,
 } from "./lib/ipc";
-import { DEFAULT_SETTINGS, type Settings } from "./types";
+import { DEFAULT_SETTINGS, type Settings, type SettingsTab } from "./types";
+
+const VALID_SETTINGS_TABS: readonly SettingsTab[] = [
+  "brains",
+  "voice",
+  "account",
+  "privacy",
+  "history",
+];
+
+function parseSettingsTab(raw: string | null): SettingsTab {
+  return raw && (VALID_SETTINGS_TABS as readonly string[]).includes(raw)
+    ? (raw as SettingsTab)
+    : "brains";
+}
 
 function resolveRoute(): {
   path: string;
-  tab: "brains" | "account" | "privacy" | "history";
+  tab: SettingsTab;
 } {
   if (typeof window === "undefined") {
     return { path: "/", tab: "brains" };
@@ -23,11 +37,7 @@ function resolveRoute(): {
   const rawPath = queryRoute || hashPath || window.location.pathname || "/";
   const normalized = rawPath.toLowerCase().replace(/\/+$/, "") || "/";
 
-  const rawTab = params.get("tab");
-  const tab =
-    rawTab === "account" || rawTab === "privacy" || rawTab === "history"
-      ? rawTab
-      : "brains";
+  const tab = parseSettingsTab(params.get("tab"));
 
   return { path: normalized, tab };
 }
@@ -59,21 +69,31 @@ const OnboardingRoute: React.FC = () => {
 
 const SettingsWindowHost: React.FC<{
   initialRoute: "/settings" | "/onboarding";
-  tab: "brains" | "account" | "privacy" | "history";
+  tab: SettingsTab;
 }> = ({ initialRoute, tab }) => {
   const [activeRoute, setActiveRoute] = useState<"/settings" | "/onboarding">(
     initialRoute,
   );
+  const [activeTab, setActiveTab] = useState<SettingsTab>(tab);
+  const [tabSyncSeq, setTabSyncSeq] = useState(0);
 
   useEffect(() => {
     setActiveRoute(initialRoute);
   }, [initialRoute]);
 
   useEffect(() => {
+    setActiveTab(tab);
+    setTabSyncSeq((n) => n + 1);
+  }, [tab]);
+
+  useEffect(() => {
     let mounted = true;
-    const unlistenPromise = onSettingsRoute((nextRoute) => {
-      if (mounted) {
-        setActiveRoute(nextRoute);
+    const unlistenPromise = onSettingsRoute((payload) => {
+      if (!mounted) return;
+      setActiveRoute(payload.route);
+      if (payload.tab) {
+        setActiveTab(payload.tab);
+        setTabSyncSeq((n) => n + 1);
       }
     });
     return () => {
@@ -88,7 +108,8 @@ const SettingsWindowHost: React.FC<{
 
   return (
     <SettingsView
-      initialTab={tab}
+      initialTab={activeTab}
+      tabSyncSeq={tabSyncSeq}
       onClose={() => {
         void closeCurrentWindow();
       }}

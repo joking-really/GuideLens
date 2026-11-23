@@ -26,7 +26,8 @@ matching the StepPlan schema:
       "confidence": 0.0 to 1.0,
       "shortcut": "<keyboard shortcut like Ctrl+Shift+P or W, or null>",
       "terminal_command": "<CLI command string when mode is terminal, else null>",
-      "explanation": "<concise 1-line explanation, or null>"
+      "explanation": "<concise 1-line explanation, or null>",
+      "spoken_text": "<optional short natural spoken coaching cue <= 140 chars, or null>"
     }
   ]
 }
@@ -37,7 +38,9 @@ Rules:
 4. Support priority apps (Photoshop, Premiere Pro, After Effects, Canva, Excel, PowerPoint,
    MS Word, Google Docs, VS Code, GitHub Desktop, Windows Terminal, OpenCode, Antigravity,
    Windows Settings, Chrome); use mode="terminal" + terminal_command for CLI tasks.
-5. Output ONLY valid JSON with no markdown fences or extra commentary."""
+5. Output ONLY valid JSON with no markdown fences or extra commentary.
+6. Optionally set `spoken_text` (<= 140 chars) to a short, natural spoken coaching cue as if
+   sitting next to the user pointing at the screen (no raw CLI commands, markdown, or URLs)."""
 
 
 class GroqTimeoutError(Exception):
