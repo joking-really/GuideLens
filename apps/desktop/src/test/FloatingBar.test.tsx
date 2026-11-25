@@ -79,9 +79,12 @@ const mocks = vi.hoisted(() => {
     emitState: emitVoiceState,
   };
 
+  const createdWindows: Array<{ label: string; options: Record<string, unknown> }> = [];
+
   return {
     listeners,
     voiceEngine,
+    createdWindows,
     invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
       if (cmd === "get_settings") {
         return { ...DEFAULT_SETTINGS, onboarding_complete: true };
@@ -100,6 +103,121 @@ const mocks = vi.hoisted(() => {
       }
       if (cmd === "transcribe") {
         return { text: "how do I export" };
+      }
+      if (cmd === "get_live_session") {
+        return {
+          session_id: null,
+          status: "idle",
+          goal: "",
+          companion_id: "pixel_cat",
+          current_step: null,
+          current_monitor: null,
+          turn_count: 0,
+          turns: [],
+          graph_md_path: null,
+          started_at: null,
+        };
+      }
+      if (cmd === "start_live_session") {
+        return {
+          session_id: "live-sess-1",
+          status: "guiding",
+          goal: String(args?.goal ?? "Guide me"),
+          companion_id: "pixel_cat",
+          current_step: {
+            step_number: 1,
+            instruction_line: "Click File in the menu bar",
+            spoken_text: "I highlighted File at the top left.",
+            confidence: 0.94,
+            action_kind: "click",
+            companion_emotion: "pointing",
+            rect_px: { x: 12, y: 10, w: 48, h: 24 },
+            source: "som",
+          },
+          current_monitor: { x: 0, y: 0, w: 1920, h: 1080, scale: 1 },
+          turn_count: 1,
+          turns: [
+            {
+              turn_number: 1,
+              user_text: String(args?.goal ?? ""),
+              instruction_line: "Click File in the menu bar",
+              spoken_text: "I highlighted File at the top left.",
+              action_kind: "click",
+              companion_emotion: "pointing",
+              target_name: "File",
+              rect_px: { x: 12, y: 10, w: 48, h: 24 },
+              active_app: "Code.exe",
+              window_title: "GuideLens",
+              latency: null,
+              timestamp: 1731900000,
+            },
+          ],
+          graph_md_path: null,
+          started_at: 1731900000,
+        };
+      }
+      if (cmd === "send_live_message") {
+        return {
+          session_id: String(args?.sessionId ?? "live-sess-1"),
+          status: "guiding",
+          goal: "Export PNG",
+          companion_id: "pixel_cat",
+          current_step: {
+            step_number: 2,
+            instruction_line: "Click Export As",
+            spoken_text: "Now pick Export As from the menu.",
+            confidence: 0.95,
+            action_kind: "click",
+            companion_emotion: "pointing",
+            rect_px: { x: 30, y: 80, w: 120, h: 28 },
+            source: "som",
+          },
+          current_monitor: { x: 0, y: 0, w: 1920, h: 1080, scale: 1 },
+          turn_count: 2,
+          turns: [],
+          graph_md_path: null,
+          started_at: 1731900000,
+        };
+      }
+      if (cmd === "end_live_session") {
+        return {
+          session_id: "live-sess-1",
+          status: "completed",
+          goal: "Export PNG",
+          companion_id: "pixel_cat",
+          current_step: null,
+          current_monitor: null,
+          turn_count: 2,
+          turns: [],
+          graph_md_path: null,
+          started_at: 1731900000,
+        };
+      }
+      if (cmd === "screenday_status") {
+        return {
+          enabled: false,
+          interval_sec: 15,
+          today_key: "2026-11-25",
+          today_frames: 0,
+          today_bytes: 0,
+          last_captured_at: null,
+          current_project: null,
+          current_meeting: null,
+          skipped_private: false,
+        };
+      }
+      if (cmd === "screenday_set_enabled") {
+        return {
+          enabled: Boolean(args?.enabled),
+          interval_sec: 15,
+          today_key: "2026-11-25",
+          today_frames: 1,
+          today_bytes: 42000,
+          last_captured_at: 1731900000,
+          current_project: "GuideLens",
+          current_meeting: null,
+          skipped_private: false,
+        };
       }
       if (cmd === "next_step") {
         return {
@@ -247,8 +365,16 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   WebviewWindow: class {
+    constructor(label: string, options: Record<string, unknown>) {
+      mocks.createdWindows.push({ label, options });
+    }
     static async getByLabel() {
       return null;
+    }
+    once(event: string, cb: () => void) {
+      if (event === "tauri://created") {
+        queueMicrotask(cb);
+      }
     }
   },
 }));
@@ -264,6 +390,7 @@ import { FloatingBar } from "../components/FloatingBar";
 describe("FloatingBar", () => {
   beforeEach(() => {
     mocks.invoke.mockClear();
+    mocks.createdWindows.length = 0;
     mocks.voiceEngine.reset();
     for (const k of Object.keys(mocks.listeners)) {
       delete mocks.listeners[k];
@@ -277,14 +404,21 @@ describe("FloatingBar", () => {
     delete (window as unknown as { MediaRecorder?: unknown }).MediaRecorder;
   });
 
-  it("renders compact 480x52 drag bar, focuses input on bar-summoned, and cycles brain modes", async () => {
+  it("renders sleek obsidian capsule pill with companion badge, focuses input on bar-summoned, and cycles brain modes", async () => {
     const user = userEvent.setup();
     render(<FloatingBar initialSettings={{ onboarding_complete: true, brain_mode: "local_vlm" }} />);
 
     const bar = screen.getByTestId("floating-bar");
     expect(bar).toHaveAttribute("data-tauri-drag-region");
-    expect(bar.className).toContain("w-[480px]");
-    expect(bar.className).toContain("h-[52px]");
+    expect(bar.className).toContain("backdrop-blur-2xl");
+    expect(bar.className).toContain("rounded-full");
+    expect(bar.className).toContain("w-[620px]");
+    expect(bar.className).toContain("h-[54px]");
+
+    // Mini companion sprite badge renders inside capsule
+    const companionBadge = screen.getByTestId("capsule-companion-badge");
+    expect(companionBadge).toBeInTheDocument();
+    expect(screen.getByTestId("companion-sprite")).toHaveAttribute("data-companion", "pixel_cat");
 
     const input = screen.getByTestId("bar-query-input");
     const pill = screen.getByTestId("brain-mode-pill");
@@ -311,6 +445,17 @@ describe("FloatingBar", () => {
 
     await user.click(pill);
     expect(pill).toHaveTextContent("Auto");
+
+    // Clicking Control Center opens the dedicated GuideLens Control Center window (no inline drawer)
+    await user.click(screen.getByTestId("open-settings-btn"));
+    expect(screen.queryByTestId("settings-view")).toBeNull();
+    expect(mocks.createdWindows[0]).toMatchObject({
+      label: "settings",
+      options: expect.objectContaining({
+        url: "/settings?tab=overview",
+        title: "GuideLens Control Center",
+      }),
+    });
   });
 
   it("toggles voice mute and starts/stops Web Speech API", async () => {
@@ -834,10 +979,15 @@ describe("FloatingBar", () => {
     expect(recorderInstances.length).toBe(1);
     expect(recorderInstances[0].state).toBe("recording");
 
-    // 1.3s of silence stops chunk and transcribes via Groq cloud STT
+    // 680ms of silence stops chunk and transcribes via Groq cloud STT (not stopped yet at 500ms)
     currentRmsSample = 0;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(1350);
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(recorderInstances[0].stop).toHaveBeenCalledTimes(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(240);
     });
     expect(recorderInstances[0].stop).toHaveBeenCalledTimes(1);
 
@@ -868,5 +1018,57 @@ describe("FloatingBar", () => {
     });
     expect(recorderInstances[1].stop).toHaveBeenCalled();
     expect(mocks.invoke).not.toHaveBeenCalledWith("transcribe", expect.anything());
+  });
+
+  it("toggles Live Call session, displays spoken whisper, routes follow-ups, and toggles Screen Day", async () => {
+    const user = userEvent.setup();
+    render(<FloatingBar initialSettings={{ onboarding_complete: true }} />);
+
+    // Screen Day toggle
+    const dayToggle = screen.getByTestId("screenday-toggle");
+    expect(dayToggle).toHaveAttribute("aria-pressed", "false");
+    await user.click(dayToggle);
+    expect(mocks.invoke).toHaveBeenCalledWith("screenday_set_enabled", { enabled: true });
+    await waitFor(() => {
+      expect(dayToggle).toHaveAttribute("aria-pressed", "true");
+    });
+
+    // Live Call start
+    const liveBtn = screen.getByTestId("live-call-toggle");
+    await user.type(screen.getByTestId("bar-query-input"), "Export as PNG");
+    await user.click(liveBtn);
+
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "start_live_session",
+      expect.objectContaining({ goal: "Export as PNG" }),
+    );
+    expect(await screen.findByTestId("instruction-line")).toHaveTextContent(
+      "Click File in the menu bar",
+    );
+    expect(screen.getByTestId("spoken-whisper")).toHaveTextContent(
+      "I highlighted File at the top left.",
+    );
+    expect(screen.getByTestId("step-counter")).toHaveTextContent("Live · Turn 1");
+
+    // Submitting a follow-up while Live Call is active calls send_live_message
+    const input = screen.getByTestId("bar-query-input");
+    await user.clear(input);
+    await user.type(input, "Where is Export As?{enter}");
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "send_live_message",
+        expect.objectContaining({ text: "Where is Export As?", sessionId: "live-sess-1" }),
+      );
+    });
+    expect(await screen.findByTestId("instruction-line")).toHaveTextContent(
+      "Click Export As",
+    );
+
+    // End Live Call
+    await user.click(liveBtn);
+    expect(mocks.invoke).toHaveBeenCalledWith("end_live_session", {
+      sessionId: "live-sess-1",
+      session_id: "live-sess-1",
+    });
   });
 });

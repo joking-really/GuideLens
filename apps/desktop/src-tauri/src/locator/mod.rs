@@ -181,7 +181,7 @@ pub fn fuzzy_name_score(target_norm: &str, candidate_norm: &str) -> f64 {
     jw.max(token_score * 0.92)
 }
 
-fn normalize_label(s: &str) -> String {
+pub fn normalize_label(s: &str) -> String {
     s.chars()
         .map(|c| {
             if c.is_alphanumeric() || c.is_whitespace() {
@@ -267,6 +267,10 @@ mod tests {
             terminal_command: None,
             explanation: None,
             spoken_text: None,
+            target_id: None,
+            action_kind: None,
+            companion_emotion: None,
+            goal_complete: false,
         }
     }
 

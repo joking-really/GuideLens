@@ -1,11 +1,12 @@
 use crate::types::{MonitorInfo, RectPx};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use image::{codecs::jpeg::JpegEncoder, ColorType, DynamicImage, ImageBuffer, Rgba};
+use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ColorType, ImageBuffer, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use uuid::Uuid;
 
@@ -45,6 +46,17 @@ pub struct ActiveWindowInfo {
     pub hwnd: isize,
     pub center_x: i32,
     pub center_y: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct LiveCaptureFrame {
+    pub image: RgbaImage,
+    pub monitor: MonitorInfo,
+    pub active_app: String,
+    pub window_title: String,
+    pub hwnd: isize,
+    pub dhash64: u64,
+    pub capture_ms: u64,
 }
 
 /// Returns the `%LOCALAPPDATA%\GuideLens\captures` directory, creating it if missing.
@@ -273,13 +285,7 @@ fn detect_active_window_raw(_walk_z_order: bool) -> ActiveWindowInfo {
     }
 }
 
-/// Captures the active monitor with `xcap`, compresses as JPEG (quality 82 for <80ms speed),
-/// saves to `%LOCALAPPDATA%\GuideLens\captures`, and returns `Capture`.
-pub fn capture_active(_app: &AppHandle) -> Result<Capture, String> {
-    capture_active_screen()
-}
-
-pub fn capture_active_screen() -> Result<Capture, String> {
+fn capture_active_monitor_rgba() -> Result<(RgbaImage, MonitorInfo, ActiveWindowInfo), String> {
     let win_info = detect_active_window();
     let monitors = xcap::Monitor::all().map_err(|e| format!("Failed to enumerate monitors: {}", e))?;
 
@@ -305,11 +311,11 @@ pub fn capture_active_screen() -> Result<Capture, String> {
         let w = captured.width();
         let h = captured.height();
         let raw = captured.into_raw();
-        let buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(w, h, raw)
+        let buf: RgbaImage = ImageBuffer::from_raw(w, h, raw)
             .ok_or_else(|| "Failed to construct RGBA image buffer".to_string())?;
         let scale = mon.scale_factor() as f64;
         (
-            DynamicImage::ImageRgba8(buf),
+            buf,
             MonitorInfo {
                 x: mon.x(),
                 y: mon.y(),
@@ -320,22 +326,207 @@ pub fn capture_active_screen() -> Result<Capture, String> {
         )
     } else {
         // Headless fallback (e.g. CI without physical display)
-        let buf: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_pixel(1920, 1080, Rgba([24, 24, 28, 255]));
-        (DynamicImage::ImageRgba8(buf), MonitorInfo::default())
+        let buf: RgbaImage = ImageBuffer::from_pixel(1920, 1080, Rgba([24, 24, 28, 255]));
+        (buf, MonitorInfo::default())
     };
 
-    let rgb_img = rgba_img.to_rgb8();
-    let mut jpeg_bytes = Vec::with_capacity((rgb_img.width() * rgb_img.height() / 4) as usize);
-    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, 82);
+    Ok((rgba_img, monitor_info, win_info))
+}
+
+pub(crate) fn encode_rgba_as_jpeg(img: &RgbaImage, quality: u8) -> Result<Vec<u8>, String> {
+    let w = img.width();
+    let h = img.height();
+    if w == 0 || h == 0 {
+        return Err("Cannot JPEG-encode an empty image".to_string());
+    }
+    let mut rgb = Vec::with_capacity((w as usize) * (h as usize) * 3);
+    for px in img.pixels() {
+        rgb.push(px[0]);
+        rgb.push(px[1]);
+        rgb.push(px[2]);
+    }
+    let mut jpeg_bytes = Vec::with_capacity((w as usize * h as usize) / 4);
+    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, quality.clamp(1, 100));
     encoder
-        .encode(
-            rgb_img.as_raw(),
-            rgb_img.width(),
-            rgb_img.height(),
-            ColorType::Rgb8.into(),
-        )
+        .encode(&rgb, w, h, ColorType::Rgb8.into())
         .map_err(|e| format!("JPEG encode failed: {}", e))?;
+    Ok(jpeg_bytes)
+}
+
+/// Resizes `img` proportionally only if larger than `(max_w, max_h)`.
+pub(crate) fn resize_within_bounds(img: &RgbaImage, max_w: u32, max_h: u32) -> Cow<'_, RgbaImage> {
+    let w = img.width();
+    let h = img.height();
+    if w == 0 || h == 0 || (max_w == 0 && max_h == 0) {
+        return Cow::Borrowed(img);
+    }
+    let scale_x = if max_w > 0 && w > max_w {
+        max_w as f64 / w as f64
+    } else {
+        1.0
+    };
+    let scale_y = if max_h > 0 && h > max_h {
+        max_h as f64 / h as f64
+    } else {
+        1.0
+    };
+    let scale = scale_x.min(scale_y);
+    if scale >= 1.0 {
+        return Cow::Borrowed(img);
+    }
+    let new_w = ((w as f64 * scale).round() as u32).max(1);
+    let new_h = ((h as f64 * scale).round() as u32).max(1);
+    Cow::Owned(image::imageops::resize(img, new_w, new_h, FilterType::Triangle))
+}
+
+/// Computes a fast 64-bit difference hash (dHash) over a 9x8 luma grid.
+pub fn compute_dhash64(img: &RgbaImage) -> u64 {
+    let w = img.width() as usize;
+    let h = img.height() as usize;
+    if w == 0 || h == 0 {
+        return 0;
+    }
+
+    let raw = img.as_raw();
+    let mut grid = [[0u32; 9]; 8];
+
+    for (gy, row) in grid.iter_mut().enumerate() {
+        let y0 = ((gy * h) / 8).min(h - 1);
+        let y1 = (((gy + 1) * h) / 8).max(y0 + 1).min(h);
+        let step_y = ((y1 - y0) / 4).max(1);
+
+        for (gx, cell) in row.iter_mut().enumerate() {
+            let x0 = ((gx * w) / 9).min(w - 1);
+            let x1 = (((gx + 1) * w) / 9).max(x0 + 1).min(w);
+            let step_x = ((x1 - x0) / 4).max(1);
+
+            let mut sum = 0u64;
+            let mut count = 0u64;
+            let mut y = y0;
+            while y < y1 {
+                let row_off = y * w;
+                let mut x = x0;
+                while x < x1 {
+                    let idx = (row_off + x) * 4;
+                    let r = raw[idx] as u64;
+                    let g = raw[idx + 1] as u64;
+                    let b = raw[idx + 2] as u64;
+                    // ITU-R BT.601 integer luma scaled by 256
+                    sum += 77 * r + 150 * g + 29 * b;
+                    count += 1;
+                    x += step_x;
+                }
+                y += step_y;
+            }
+            *cell = (sum / count.max(1)) as u32;
+        }
+    }
+
+    let mut hash = 0u64;
+    for (gy, row) in grid.iter().enumerate() {
+        for gx in 0..8 {
+            if row[gx] < row[gx + 1] {
+                hash |= 1u64 << (gy * 8 + gx);
+            }
+        }
+    }
+    hash
+}
+
+/// Formats a 64-bit dHash as a fixed 16-character lowercase hex string.
+pub fn dhash_to_hex(hash: u64) -> String {
+    format!("{:016x}", hash)
+}
+
+/// Returns the Hamming distance (differing bit count) between two 64-bit dHashes.
+pub fn hamming_distance(a: u64, b: u64) -> u32 {
+    (a ^ b).count_ones()
+}
+
+/// Returns the Hamming distance between two hex-encoded 64-bit dHashes.
+/// Missing or malformed hex strings return `64` so initial frames always treat content as changed.
+pub fn hamming_distance_hex(a: &str, b: &str) -> u32 {
+    let Ok(ua) = u64::from_str_radix(a.trim(), 16) else {
+        return 64;
+    };
+    let Ok(ub) = u64::from_str_radix(b.trim(), 16) else {
+        return 64;
+    };
+    (ua ^ ub).count_ones()
+}
+
+/// Resizes `img` to fit within `max_dim` (if > 0) and encodes as JPEG + base64.
+pub fn encode_resized_jpeg_base64(
+    img: &RgbaImage,
+    max_dim: u32,
+    quality: u8,
+) -> Result<(Vec<u8>, String), String> {
+    let resized = resize_within_bounds(img, max_dim, max_dim);
+    let q = if quality == 0 { 78 } else { quality.clamp(1, 100) };
+    let jpeg_bytes = encode_rgba_as_jpeg(resized.as_ref(), q)?;
+    let b64 = BASE64.encode(&jpeg_bytes);
+    Ok((jpeg_bytes, b64))
+}
+
+/// Encodes an ultra-compressed Screen Day JPEG frame (defaults to 1280px max width, quality 52).
+pub fn encode_compressed_day_frame(
+    img: &RgbaImage,
+    max_width: u32,
+    quality: u8,
+) -> Result<Vec<u8>, String> {
+    let target_w = if max_width == 0 { 1280 } else { max_width };
+    let q = if quality == 0 { 52 } else { quality.clamp(1, 100) };
+    let resized = resize_within_bounds(img, target_w, 0);
+    encode_rgba_as_jpeg(resized.as_ref(), q)
+}
+
+/// Writes `bytes` to `path` on a background blocking thread without stalling the live pipeline.
+pub fn save_bytes_async(path: PathBuf, bytes: Vec<u8>) {
+    let write_fn = move || {
+        if let Some(parent) = path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                log::warn!("save_bytes_async failed creating dir {:?}: {}", parent, e);
+                return;
+            }
+        }
+        if let Err(e) = fs::write(&path, &bytes) {
+            log::warn!("save_bytes_async failed writing {:?}: {}", path, e);
+        }
+    };
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn_blocking(write_fn);
+    } else {
+        std::thread::spawn(write_fn);
+    }
+}
+
+/// Captures the active monitor into memory with zero disk I/O for low-latency live grounding.
+pub fn capture_for_live_grounding(_app: Option<&AppHandle>) -> Result<LiveCaptureFrame, String> {
+    let started = Instant::now();
+    let (image, monitor, win_info) = capture_active_monitor_rgba()?;
+    let dhash64 = compute_dhash64(&image);
+    let capture_ms = started.elapsed().as_millis() as u64;
+
+    Ok(LiveCaptureFrame {
+        image,
+        monitor,
+        active_app: win_info.active_app,
+        window_title: win_info.window_title,
+        hwnd: win_info.hwnd,
+        dhash64,
+        capture_ms,
+    })
+}
+
+/// Captures the active monitor with `xcap`, compresses as JPEG (quality 82 for <80ms speed),
+/// saves to `%LOCALAPPDATA%\GuideLens\captures`, and returns `Capture`.
+pub fn capture_active(_app: &AppHandle) -> Result<Capture, String> {
+    capture_active_screen()
+}
+
+pub fn capture_active_screen() -> Result<Capture, String> {
+    let (rgba_img, monitor_info, win_info) = capture_active_monitor_rgba()?;
+    let jpeg_bytes = encode_rgba_as_jpeg(&rgba_img, 82)?;
 
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -505,5 +696,89 @@ mod tests {
             &mon,
         );
         assert_eq!(norm, [250.0, 250.0, 100.0, 100.0]);
+    }
+
+    #[test]
+    fn test_dhash64_similarity_and_hex_distance() {
+        let make_gradient = |offset: i16, flip: bool| -> RgbaImage {
+            ImageBuffer::from_fn(180, 120, |x, y| {
+                let base = if flip {
+                    255 - ((x * 255) / 180) as i16
+                } else {
+                    ((x * 200 + y * 55) / 180) as i16
+                };
+                let v = (base + offset).clamp(0, 255) as u8;
+                Rgba([v, v.saturating_sub(10), v, 255])
+            })
+        };
+
+        let img_a = make_gradient(0, false);
+        let img_a_shifted = make_gradient(12, false);
+        let img_b = make_gradient(0, true);
+
+        let h_a = compute_dhash64(&img_a);
+        let h_a2 = compute_dhash64(&img_a_shifted);
+        let h_b = compute_dhash64(&img_b);
+
+        assert_eq!(hamming_distance(h_a, h_a), 0);
+        assert!(
+            hamming_distance(h_a, h_a2) <= 4,
+            "slight brightness shift should keep dHash nearly identical (dist={})",
+            hamming_distance(h_a, h_a2)
+        );
+        assert!(
+            hamming_distance(h_a, h_b) >= 24,
+            "reversed image gradient must produce large dHash distance (dist={})",
+            hamming_distance(h_a, h_b)
+        );
+
+        let hex_a = dhash_to_hex(h_a);
+        let hex_b = dhash_to_hex(h_b);
+        assert_eq!(hex_a.len(), 16);
+        assert_eq!(hamming_distance_hex(&hex_a, &hex_a), 0);
+        assert_eq!(hamming_distance_hex(&hex_a, &hex_b), hamming_distance(h_a, h_b));
+        assert_eq!(hamming_distance_hex("", &hex_a), 64);
+        assert_eq!(hamming_distance_hex("not-hex", &hex_b), 64);
+    }
+
+    #[test]
+    fn test_encode_resized_and_compressed_day_frame() {
+        let img: RgbaImage = ImageBuffer::from_fn(1920, 1080, |x, y| {
+            Rgba([
+                ((x / 8) % 255) as u8,
+                ((y / 6) % 255) as u8,
+                (((x + y) / 12) % 255) as u8,
+                255,
+            ])
+        });
+
+        let (som_bytes, som_b64) = encode_resized_jpeg_base64(&img, 1344, 78).unwrap();
+        assert!(som_bytes.starts_with(&[0xFF, 0xD8, 0xFF]));
+        assert!(!som_b64.is_empty());
+        let decoded_som = image::load_from_memory(&som_bytes).unwrap();
+        assert_eq!(decoded_som.width(), 1344);
+        assert_eq!(decoded_som.height(), 756);
+
+        let day_bytes = encode_compressed_day_frame(&img, 1280, 52).unwrap();
+        assert!(day_bytes.starts_with(&[0xFF, 0xD8, 0xFF]));
+        assert!(day_bytes.len() < som_bytes.len());
+        let decoded_day = image::load_from_memory(&day_bytes).unwrap();
+        assert_eq!(decoded_day.width(), 1280);
+        assert_eq!(decoded_day.height(), 720);
+    }
+
+    #[test]
+    fn test_save_bytes_async_creates_parent_and_writes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("nested").join("dir").join("frame.jpg");
+        let payload = vec![0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3, 4];
+        save_bytes_async(target.clone(), payload.clone());
+
+        let start = Instant::now();
+        while !target.exists() && start.elapsed() < std::time::Duration::from_secs(2) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(target.exists(), "async write should create target file");
+        assert_eq!(fs::read(&target).unwrap(), payload);
     }
 }

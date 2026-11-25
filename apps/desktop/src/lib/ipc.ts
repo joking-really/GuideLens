@@ -13,18 +13,39 @@ import {
   type AskErrorCode,
   type AskResponse,
   type AuthStatus,
+  type BBox,
   type BrainKind,
+  type BrainMode,
   type BrainStatusPayload,
   clampInstruction,
+  type CompanionId,
+  type ConnectionTestResult,
   DEFAULT_SETTINGS,
   type DetectedAgent,
   type HistoryDetail,
   type HistorySession,
   type HistoryStep,
+  type KgEdgeDto,
+  type KgNodeDto,
+  type KnowledgeGraphDto,
+  type LatencyBreakdown,
+  type LatencyStats,
+  type LiveSessionState,
+  type LiveSessionStatus,
+  type LiveSessionTurn,
   type MonitorInfo,
   type OllamaPullProgressPayload,
   type OllamaStatus,
+  type OverlayCompanionPayload,
+  type RectPx,
   type ResolvedStep,
+  type ScreenDayDetailDto,
+  type ScreenDayFrameDto,
+  type ScreenDayMeetingGroup,
+  type ScreenDayProjectGroup,
+  type ScreenDayStatusDto,
+  type ScreenDaySummaryDto,
+  type SessionGraphSummaryDto,
   type Settings,
   type SettingsTab,
   type Step,
@@ -42,6 +63,48 @@ function isRecord(val: unknown): val is Record<string, unknown> {
   return typeof val === "object" && val !== null && !Array.isArray(val);
 }
 
+function normalizeBBox(raw: unknown): BBox | null {
+  if (!Array.isArray(raw) || raw.length !== 4) return null;
+  return [
+    Number(raw[0]) || 0,
+    Number(raw[1]) || 0,
+    Number(raw[2]) || 0,
+    Number(raw[3]) || 0,
+  ];
+}
+
+function normalizeMonitor(raw: unknown): MonitorInfo | null {
+  if (!isRecord(raw)) return null;
+  return {
+    x: Number(raw.x) || 0,
+    y: Number(raw.y) || 0,
+    w: Number(raw.w ?? raw.width) || 1920,
+    h: Number(raw.h ?? raw.height) || 1080,
+    scale: Number(raw.scale) || 1,
+  };
+}
+
+function normalizeRectPx(raw: unknown): RectPx | null {
+  if (!isRecord(raw)) return null;
+  return {
+    x: Number(raw.x) || 0,
+    y: Number(raw.y) || 0,
+    w: Number(raw.w ?? raw.width) || 0,
+    h: Number(raw.h ?? raw.height) || 0,
+  };
+}
+
+function normalizeLatency(raw: unknown): LatencyBreakdown | null {
+  if (!isRecord(raw)) return null;
+  return {
+    capture_ms: Math.max(0, Number(raw.capture_ms) || 0),
+    grounding_ms: Math.max(0, Number(raw.grounding_ms) || 0),
+    memory_ms: Math.max(0, Number(raw.memory_ms) || 0),
+    llm_ms: Math.max(0, Number(raw.llm_ms) || 0),
+    total_ms: Math.max(0, Number(raw.total_ms) || 0),
+  };
+}
+
 function normalizeStep(raw: unknown, idx: number): Step {
   const obj = isRecord(raw) ? raw : {};
   const stepNumber =
@@ -53,15 +116,7 @@ function normalizeStep(raw: unknown, idx: number): Step {
         ? obj.instruction
         : "",
   );
-  const bbox =
-    Array.isArray(obj.bbox) && obj.bbox.length === 4
-      ? ([
-          Number(obj.bbox[0]) || 0,
-          Number(obj.bbox[1]) || 0,
-          Number(obj.bbox[2]) || 0,
-          Number(obj.bbox[3]) || 0,
-        ] as [number, number, number, number])
-      : null;
+  const bbox = normalizeBBox(obj.bbox);
 
   return {
     step_number: stepNumber,
@@ -88,6 +143,11 @@ function normalizeStep(raw: unknown, idx: number): Step {
       typeof obj.spoken_text === "string" && obj.spoken_text.trim().length > 0
         ? clampInstruction(obj.spoken_text)
         : null,
+    target_id: typeof obj.target_id === "number" ? obj.target_id : null,
+    action_kind: typeof obj.action_kind === "string" ? obj.action_kind : null,
+    companion_emotion:
+      typeof obj.companion_emotion === "string" ? obj.companion_emotion : null,
+    goal_complete: Boolean(obj.goal_complete),
   };
 }
 
@@ -98,23 +158,19 @@ function normalizeResolvedStep(
 ): ResolvedStep {
   const base = normalizeStep(raw, idx);
   const obj = isRecord(raw) ? raw : {};
-  let rectPx: ResolvedStep["rect_px"] = null;
+  const rawSource = obj.source;
+  let rectPx = normalizeRectPx(obj.rect_px);
 
-  if (isRecord(obj.rect_px)) {
-    rectPx = {
-      x: Number(obj.rect_px.x) || 0,
-      y: Number(obj.rect_px.y) || 0,
-      w: Number(obj.rect_px.w ?? obj.rect_px.width) || 0,
-      h: Number(obj.rect_px.h ?? obj.rect_px.height) || 0,
-    };
-  } else if (base.bbox && base.confidence >= 0.5) {
+  if (!rectPx && base.bbox && (base.confidence >= 0.5 || rawSource === "uia" || rawSource === "som")) {
     const mon = monitor ?? { x: 0, y: 0, w: 1920, h: 1080, scale: 1 };
     rectPx = normalizedToPhysical(base.bbox, mon);
   }
 
-  const rawSource = obj.source;
   const source: ResolvedStep["source"] =
-    rawSource === "uia" || rawSource === "vlm" || rawSource === "none"
+    rawSource === "uia" ||
+    rawSource === "som" ||
+    rawSource === "vlm" ||
+    rawSource === "none"
       ? rawSource
       : rectPx
         ? "vlm"
@@ -129,15 +185,7 @@ function normalizeResolvedStep(
 
 export function normalizeAskResponse(raw: unknown): AskResponse {
   const obj = isRecord(raw) ? raw : {};
-  const monitor: MonitorInfo | null = isRecord(obj.monitor)
-    ? {
-        x: Number(obj.monitor.x) || 0,
-        y: Number(obj.monitor.y) || 0,
-        w: Number(obj.monitor.w ?? obj.monitor.width) || 1920,
-        h: Number(obj.monitor.h ?? obj.monitor.height) || 1080,
-        scale: Number(obj.monitor.scale) || 1,
-      }
-    : null;
+  const monitor = normalizeMonitor(obj.monitor);
 
   const planObj = isRecord(obj.plan) ? obj.plan : obj;
   const rawMode = planObj.mode;
@@ -195,6 +243,7 @@ export function normalizeAskResponse(raw: unknown): AskResponse {
           ? obj.screenshot_path
           : null,
     monitor,
+    latency: normalizeLatency(obj.latency),
   };
 }
 
@@ -345,6 +394,51 @@ function normalizeSettings(
       typeof obj.voice_conversation_mode === "boolean"
         ? obj.voice_conversation_mode
         : DEFAULT_SETTINGS.voice_conversation_mode,
+    companion_id:
+      typeof obj.companion_id === "string" && obj.companion_id.trim().length > 0
+        ? (obj.companion_id as CompanionId)
+        : DEFAULT_SETTINGS.companion_id,
+    companion_wander:
+      typeof obj.companion_wander === "boolean"
+        ? obj.companion_wander
+        : DEFAULT_SETTINGS.companion_wander,
+    screenday_enabled:
+      typeof obj.screenday_enabled === "boolean"
+        ? obj.screenday_enabled
+        : DEFAULT_SETTINGS.screenday_enabled,
+    screenday_interval_sec:
+      typeof obj.screenday_interval_sec === "number" &&
+      Number.isFinite(obj.screenday_interval_sec) &&
+      obj.screenday_interval_sec > 0
+        ? Math.round(obj.screenday_interval_sec)
+        : DEFAULT_SETTINGS.screenday_interval_sec,
+    screenday_excluded_apps: Array.isArray(obj.screenday_excluded_apps)
+      ? obj.screenday_excluded_apps.map((a) => String(a))
+      : DEFAULT_SETTINGS.screenday_excluded_apps,
+    screenday_skip_private:
+      typeof obj.screenday_skip_private === "boolean"
+        ? obj.screenday_skip_private
+        : DEFAULT_SETTINGS.screenday_skip_private,
+    custom_api_base_url:
+      typeof obj.custom_api_base_url === "string"
+        ? obj.custom_api_base_url
+        : DEFAULT_SETTINGS.custom_api_base_url,
+    custom_agent_cmd:
+      typeof obj.custom_agent_cmd === "string"
+        ? obj.custom_agent_cmd
+        : DEFAULT_SETTINGS.custom_agent_cmd,
+    summary_brain_mode:
+      typeof obj.summary_brain_mode === "string"
+        ? (obj.summary_brain_mode as BrainMode)
+        : DEFAULT_SETTINGS.summary_brain_mode,
+    summary_byo_provider:
+      typeof obj.summary_byo_provider === "string"
+        ? (obj.summary_byo_provider as ApiProvider)
+        : DEFAULT_SETTINGS.summary_byo_provider,
+    summary_byo_model:
+      typeof obj.summary_byo_model === "string"
+        ? obj.summary_byo_model
+        : DEFAULT_SETTINGS.summary_byo_model,
     bar_position: barPos,
   };
 }
@@ -394,6 +488,8 @@ export async function listApiKeyProviders(): Promise<ApiProvider[]> {
     "anthropic",
     "groq",
     "openrouter",
+    "deepseek",
+    "custom_openai",
   ];
   const result: ApiProvider[] = [];
   for (const item of raw) {
@@ -724,8 +820,12 @@ export function onBarSummoned(handler: () => void): Promise<UnlistenFn> {
 }
 
 const VALID_SETTINGS_TABS: readonly SettingsTab[] = [
+  "overview",
   "brains",
   "voice",
+  "diary",
+  "graph",
+  "companions",
   "account",
   "privacy",
   "history",
@@ -814,7 +914,7 @@ export async function openSettingsWindow(
       ? "Welcome to GuideLens"
       : validTab === "voice"
         ? "GuideLens Voice Studio"
-        : "GuideLens Settings & History";
+        : "GuideLens Control Center";
   try {
     const existing = await WebviewWindow.getByLabel("settings");
     if (existing) {
@@ -843,10 +943,10 @@ export async function openSettingsWindow(
     const win = new WebviewWindow("settings", {
       url: windowUrl,
       title: windowTitle,
-      width: 780,
-      height: 640,
-      minWidth: 640,
-      minHeight: 520,
+      width: 1120,
+      height: 740,
+      minWidth: 880,
+      minHeight: 600,
       resizable: true,
       center: true,
       decorations: true,
@@ -961,4 +1061,721 @@ export async function startBarDrag(): Promise<void> {
   } catch {
     // Ignore outside Tauri runtime
   }
+}
+
+// ============================================================================
+// GuideLens v2 IPC Commands & Events
+// ============================================================================
+
+const VALID_LIVE_STATUSES: readonly LiveSessionStatus[] = [
+  "idle",
+  "listening",
+  "observing",
+  "guiding",
+  "waiting_settle",
+  "paused",
+  "completed",
+];
+
+function todayKeyLocal(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+async function invokeWithFallback<T>(
+  cmd: string,
+  args: Record<string, unknown> | undefined,
+  fallback: () => T,
+): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (err) {
+    if (!isTauriRuntime()) {
+      return fallback();
+    }
+    throw err;
+  }
+}
+
+async function safeListen<T>(
+  event: string,
+  callback: (payload: T) => void,
+): Promise<UnlistenFn> {
+  try {
+    return await listen<T>(event, (ev) => callback(ev.payload));
+  } catch {
+    return () => {};
+  }
+}
+
+function defaultLiveSessionState(
+  overrides: Partial<LiveSessionState> = {},
+): LiveSessionState {
+  return {
+    session_id: null,
+    status: "idle",
+    goal: "",
+    companion_id: DEFAULT_SETTINGS.companion_id,
+    current_step: null,
+    current_monitor: null,
+    turn_count: 0,
+    turns: [],
+    graph_md_path: null,
+    started_at: null,
+    ...overrides,
+  };
+}
+
+function normalizeLiveSessionTurn(raw: unknown, idx: number): LiveSessionTurn {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    turn_number:
+      typeof obj.turn_number === "number" ? obj.turn_number : idx + 1,
+    user_text: typeof obj.user_text === "string" ? obj.user_text : null,
+    instruction_line: clampInstruction(
+      typeof obj.instruction_line === "string" ? obj.instruction_line : "",
+    ),
+    spoken_text:
+      typeof obj.spoken_text === "string" && obj.spoken_text.trim().length > 0
+        ? clampInstruction(obj.spoken_text)
+        : null,
+    action_kind: typeof obj.action_kind === "string" ? obj.action_kind : null,
+    companion_emotion:
+      typeof obj.companion_emotion === "string"
+        ? obj.companion_emotion
+        : null,
+    target_name: typeof obj.target_name === "string" ? obj.target_name : null,
+    rect_px: normalizeRectPx(obj.rect_px),
+    active_app: typeof obj.active_app === "string" ? obj.active_app : "Unknown",
+    window_title:
+      typeof obj.window_title === "string" ? obj.window_title : "",
+    latency: normalizeLatency(obj.latency),
+    timestamp:
+      typeof obj.timestamp === "number"
+        ? obj.timestamp
+        : Math.floor(Date.now() / 1000),
+  };
+}
+
+function normalizeLiveSessionState(raw: unknown): LiveSessionState {
+  const obj = isRecord(raw) ? raw : {};
+  const rawStatus = obj.status;
+  const status: LiveSessionStatus =
+    typeof rawStatus === "string" &&
+    (VALID_LIVE_STATUSES as readonly string[]).includes(rawStatus)
+      ? (rawStatus as LiveSessionStatus)
+      : "idle";
+  const currentMonitor = normalizeMonitor(obj.current_monitor);
+  const currentStep = isRecord(obj.current_step)
+    ? normalizeResolvedStep(obj.current_step, 0, currentMonitor)
+    : null;
+  const turns = Array.isArray(obj.turns)
+    ? obj.turns.map((t, i) => normalizeLiveSessionTurn(t, i))
+    : [];
+
+  return {
+    session_id: typeof obj.session_id === "string" ? obj.session_id : null,
+    status,
+    goal: typeof obj.goal === "string" ? obj.goal : "",
+    companion_id:
+      typeof obj.companion_id === "string" && obj.companion_id.trim().length > 0
+        ? (obj.companion_id as CompanionId)
+        : DEFAULT_SETTINGS.companion_id,
+    current_step: currentStep,
+    current_monitor: currentMonitor,
+    turn_count:
+      typeof obj.turn_count === "number" ? obj.turn_count : turns.length,
+    turns,
+    graph_md_path:
+      typeof obj.graph_md_path === "string" ? obj.graph_md_path : null,
+    started_at: typeof obj.started_at === "number" ? obj.started_at : null,
+  };
+}
+
+function normalizeOverlayCompanion(raw: unknown): OverlayCompanionPayload {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    mode: typeof obj.mode === "string" ? obj.mode : "idle",
+    companion_id:
+      typeof obj.companion_id === "string" && obj.companion_id.trim().length > 0
+        ? (obj.companion_id as CompanionId)
+        : DEFAULT_SETTINGS.companion_id,
+    emotion: typeof obj.emotion === "string" ? obj.emotion : "idle",
+    wander:
+      typeof obj.wander === "boolean"
+        ? obj.wander
+        : DEFAULT_SETTINGS.companion_wander,
+    x: typeof obj.x === "number" ? obj.x : null,
+    y: typeof obj.y === "number" ? obj.y : null,
+    bubble_text:
+      typeof obj.bubble_text === "string" ? obj.bubble_text : null,
+    screenday_recording: Boolean(obj.screenday_recording),
+  };
+}
+
+function normalizeKgNode(raw: unknown): KgNodeDto {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    id: String(obj.id ?? ""),
+    node_type: String(obj.node_type ?? "control"),
+    app_exe: String(obj.app_exe ?? ""),
+    label: String(obj.label ?? ""),
+    metadata_json:
+      typeof obj.metadata_json === "string" ? obj.metadata_json : null,
+    hit_count: Number(obj.hit_count) || 0,
+    updated_at: Number(obj.updated_at) || 0,
+  };
+}
+
+function normalizeKgEdge(raw: unknown): KgEdgeDto {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    id: String(obj.id ?? ""),
+    from_node: String(obj.from_node ?? ""),
+    to_node: String(obj.to_node ?? ""),
+    relation: String(obj.relation ?? "leads_to"),
+    intent: String(obj.intent ?? ""),
+    control_name:
+      typeof obj.control_name === "string" ? obj.control_name : null,
+    control_type:
+      typeof obj.control_type === "string" ? obj.control_type : null,
+    shortcut: typeof obj.shortcut === "string" ? obj.shortcut : null,
+    norm_bbox: normalizeBBox(obj.norm_bbox),
+    success_count: Number(obj.success_count) || 0,
+    updated_at: Number(obj.updated_at) || 0,
+  };
+}
+
+function normalizeSessionGraphSummary(raw: unknown): SessionGraphSummaryDto {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    session_id: String(obj.session_id ?? ""),
+    day_key: String(obj.day_key ?? todayKeyLocal()),
+    active_app: String(obj.active_app ?? "Unknown"),
+    goal: String(obj.goal ?? ""),
+    graph_md_path: String(obj.graph_md_path ?? ""),
+    node_count: Math.max(0, Number(obj.node_count) || 0),
+    edge_count: Math.max(0, Number(obj.edge_count) || 0),
+    completed: Boolean(obj.completed),
+    created_at: Number(obj.created_at) || 0,
+  };
+}
+
+function normalizeScreenDayFrame(raw: unknown): ScreenDayFrameDto {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    id: String(obj.id ?? ""),
+    day_key: String(obj.day_key ?? todayKeyLocal()),
+    captured_at: Number(obj.captured_at) || 0,
+    image_path: String(obj.image_path ?? ""),
+    active_app: String(obj.active_app ?? "Unknown"),
+    window_title: String(obj.window_title ?? ""),
+    project_name:
+      typeof obj.project_name === "string" ? obj.project_name : null,
+    meeting_name:
+      typeof obj.meeting_name === "string" ? obj.meeting_name : null,
+    ocr_excerpt: typeof obj.ocr_excerpt === "string" ? obj.ocr_excerpt : null,
+    dhash: String(obj.dhash ?? ""),
+    file_bytes: Math.max(0, Number(obj.file_bytes) || 0),
+  };
+}
+
+function normalizeScreenDaySummary(raw: unknown): ScreenDaySummaryDto {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    day_key: String(obj.day_key ?? todayKeyLocal()),
+    folder_path: String(obj.folder_path ?? ""),
+    frame_count: Math.max(0, Number(obj.frame_count) || 0),
+    total_bytes: Math.max(0, Number(obj.total_bytes) || 0),
+    session_count: Math.max(0, Number(obj.session_count) || 0),
+    projects: Array.isArray(obj.projects)
+      ? obj.projects.map((p) => String(p))
+      : [],
+    meetings: Array.isArray(obj.meetings)
+      ? obj.meetings.map((m) => String(m))
+      : [],
+    summary_md: typeof obj.summary_md === "string" ? obj.summary_md : null,
+    graph_md_path:
+      typeof obj.graph_md_path === "string" ? obj.graph_md_path : null,
+    updated_at: Number(obj.updated_at) || 0,
+  };
+}
+
+function normalizeScreenDayStatus(
+  raw: unknown,
+  fallbackEnabled = false,
+): ScreenDayStatusDto {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    enabled:
+      typeof obj.enabled === "boolean" ? obj.enabled : fallbackEnabled,
+    interval_sec:
+      typeof obj.interval_sec === "number" && obj.interval_sec > 0
+        ? obj.interval_sec
+        : DEFAULT_SETTINGS.screenday_interval_sec,
+    today_key:
+      typeof obj.today_key === "string" ? obj.today_key : todayKeyLocal(),
+    today_frames: Math.max(0, Number(obj.today_frames) || 0),
+    today_bytes: Math.max(0, Number(obj.today_bytes) || 0),
+    last_captured_at:
+      typeof obj.last_captured_at === "number" ? obj.last_captured_at : null,
+    current_project:
+      typeof obj.current_project === "string" ? obj.current_project : null,
+    current_meeting:
+      typeof obj.current_meeting === "string" ? obj.current_meeting : null,
+    skipped_private: Boolean(obj.skipped_private),
+  };
+}
+
+function normalizeScreenDayDetail(raw: unknown): ScreenDayDetailDto | null {
+  if (!isRecord(raw)) return null;
+  const projectGroups: ScreenDayProjectGroup[] = Array.isArray(
+    raw.project_groups,
+  )
+    ? raw.project_groups.filter(isRecord).map((g) => ({
+        name: String(g.name ?? ""),
+        frame_count: Math.max(0, Number(g.frame_count) || 0),
+        apps: Array.isArray(g.apps) ? g.apps.map((a) => String(a)) : [],
+      }))
+    : [];
+  const meetingGroups: ScreenDayMeetingGroup[] = Array.isArray(
+    raw.meeting_groups,
+  )
+    ? raw.meeting_groups.filter(isRecord).map((g) => ({
+        name: String(g.name ?? ""),
+        started_at: Number(g.started_at) || 0,
+        ended_at: Number(g.ended_at) || 0,
+        frame_count: Math.max(0, Number(g.frame_count) || 0),
+        screen_topics: Array.isArray(g.screen_topics)
+          ? g.screen_topics.map((t) => String(t))
+          : [],
+      }))
+    : [];
+
+  return {
+    summary: normalizeScreenDaySummary(raw.summary),
+    frames: Array.isArray(raw.frames)
+      ? raw.frames.map(normalizeScreenDayFrame)
+      : [],
+    project_groups: projectGroups,
+    meeting_groups: meetingGroups,
+    sessions: Array.isArray(raw.sessions)
+      ? raw.sessions.map(normalizeSessionGraphSummary)
+      : [],
+    day_graph_md:
+      typeof raw.day_graph_md === "string" ? raw.day_graph_md : null,
+    day_diary_md:
+      typeof raw.day_diary_md === "string" ? raw.day_diary_md : null,
+  };
+}
+
+export async function startLiveSession(
+  goal: string,
+  brainOverride?: BrainKind | null,
+): Promise<LiveSessionState> {
+  const raw = await invokeWithFallback<unknown>(
+    "start_live_session",
+    {
+      goal,
+      brain: brainOverride ?? null,
+      brainOverride: brainOverride ?? null,
+      brain_override: brainOverride ?? null,
+    },
+    () =>
+      defaultLiveSessionState({
+        session_id: "browser-live-session",
+        status: "guiding",
+        goal,
+        started_at: Math.floor(Date.now() / 1000),
+      }),
+  );
+  return normalizeLiveSessionState(raw);
+}
+
+export async function sendLiveMessage(
+  text: string,
+  sessionId?: string | null,
+): Promise<LiveSessionState> {
+  const now = Math.floor(Date.now() / 1000);
+  const raw = await invokeWithFallback<unknown>(
+    "send_live_message",
+    {
+      text,
+      message: text,
+      sessionId: sessionId ?? null,
+      session_id: sessionId ?? null,
+    },
+    () =>
+      defaultLiveSessionState({
+        session_id: sessionId ?? "browser-live-session",
+        status: "guiding",
+        goal: text,
+        turn_count: 1,
+        turns: [
+          {
+            turn_number: 1,
+            user_text: text,
+            instruction_line: clampInstruction(text),
+            spoken_text: null,
+            action_kind: null,
+            companion_emotion: "thinking",
+            target_name: null,
+            rect_px: null,
+            active_app: "Browser",
+            window_title: "GuideLens Preview",
+            latency: null,
+            timestamp: now,
+          },
+        ],
+        started_at: now,
+      }),
+  );
+  return normalizeLiveSessionState(raw);
+}
+
+export async function endLiveSession(
+  sessionId?: string | null,
+): Promise<LiveSessionState> {
+  const raw = await invokeWithFallback<unknown>(
+    "end_live_session",
+    {
+      sessionId: sessionId ?? null,
+      session_id: sessionId ?? null,
+    },
+    () =>
+      defaultLiveSessionState({
+        session_id: sessionId ?? null,
+        status: "completed",
+      }),
+  );
+  return normalizeLiveSessionState(raw);
+}
+
+export async function getLiveSession(): Promise<LiveSessionState> {
+  const raw = await invokeWithFallback<unknown>(
+    "get_live_session",
+    undefined,
+    () => defaultLiveSessionState(),
+  );
+  return normalizeLiveSessionState(raw);
+}
+
+export async function pauseLiveSession(
+  paused: boolean,
+  sessionId?: string | null,
+): Promise<LiveSessionState> {
+  const raw = await invokeWithFallback<unknown>(
+    "pause_live_session",
+    {
+      paused,
+      sessionId: sessionId ?? null,
+      session_id: sessionId ?? null,
+    },
+    () =>
+      defaultLiveSessionState({
+        session_id: sessionId ?? null,
+        status: paused ? "paused" : "guiding",
+      }),
+  );
+  return normalizeLiveSessionState(raw);
+}
+
+export function onLiveSessionEvent(
+  handler: (state: LiveSessionState) => void,
+): Promise<UnlistenFn> {
+  return safeListen<unknown>("live-session-event", (payload) => {
+    handler(normalizeLiveSessionState(payload));
+  });
+}
+
+export function onOverlayCompanion(
+  handler: (payload: OverlayCompanionPayload) => void,
+): Promise<UnlistenFn> {
+  return safeListen<unknown>("overlay-companion", (payload) => {
+    handler(normalizeOverlayCompanion(payload));
+  });
+}
+
+export async function previewCompanion(
+  companionId: CompanionId,
+  emotion = "happy",
+  bubbleText?: string | null,
+): Promise<void> {
+  await invokeWithFallback<void>(
+    "preview_companion",
+    {
+      companionId,
+      companion_id: companionId,
+      emotion,
+      bubbleText: bubbleText ?? null,
+      bubble_text: bubbleText ?? null,
+    },
+    () => undefined,
+  );
+}
+
+export const emitCompanionPreview = previewCompanion;
+
+export async function getKnowledgeGraph(
+  appFilter?: string | null,
+): Promise<KnowledgeGraphDto> {
+  const raw = await invokeWithFallback<unknown>(
+    "get_knowledge_graph",
+    {
+      appFilter: appFilter ?? null,
+      app_filter: appFilter ?? null,
+    },
+    () => ({
+      nodes: [],
+      edges: [],
+      sessions: [],
+      master_md_path: null,
+    }),
+  );
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    nodes: Array.isArray(obj.nodes) ? obj.nodes.map(normalizeKgNode) : [],
+    edges: Array.isArray(obj.edges) ? obj.edges.map(normalizeKgEdge) : [],
+    sessions: Array.isArray(obj.sessions)
+      ? obj.sessions.map(normalizeSessionGraphSummary)
+      : [],
+    master_md_path:
+      typeof obj.master_md_path === "string" ? obj.master_md_path : null,
+  };
+}
+
+export async function listSessionGraphs(
+  dayKey?: string | null,
+  limit = 50,
+): Promise<SessionGraphSummaryDto[]> {
+  const raw = await invokeWithFallback<unknown>(
+    "list_session_graphs",
+    {
+      dayKey: dayKey ?? null,
+      day_key: dayKey ?? null,
+      limit,
+    },
+    () => [],
+  );
+  return Array.isArray(raw) ? raw.map(normalizeSessionGraphSummary) : [];
+}
+
+export async function readGraphMarkdown(path: string): Promise<string> {
+  const raw = await invokeWithFallback<unknown>(
+    "read_graph_markdown",
+    { path },
+    () => "",
+  );
+  return typeof raw === "string" ? raw : "";
+}
+
+export async function deleteMemoryNode(nodeId: string): Promise<void> {
+  await invokeWithFallback<void>(
+    "delete_memory_node",
+    {
+      nodeId,
+      node_id: nodeId,
+      id: nodeId,
+    },
+    () => undefined,
+  );
+}
+
+export async function screendaySetEnabled(
+  enabled: boolean,
+): Promise<ScreenDayStatusDto> {
+  const raw = await invokeWithFallback<unknown>(
+    "screenday_set_enabled",
+    { enabled },
+    () => normalizeScreenDayStatus(null, enabled),
+  );
+  return normalizeScreenDayStatus(raw, enabled);
+}
+
+export async function screendayStatus(): Promise<ScreenDayStatusDto> {
+  const raw = await invokeWithFallback<unknown>(
+    "screenday_status",
+    undefined,
+    () => normalizeScreenDayStatus(null, false),
+  );
+  return normalizeScreenDayStatus(raw, false);
+}
+
+export async function screendayCaptureNow(): Promise<ScreenDayFrameDto | null> {
+  const raw = await invokeWithFallback<unknown>(
+    "screenday_capture_now",
+    undefined,
+    () => null,
+  );
+  return isRecord(raw) ? normalizeScreenDayFrame(raw) : null;
+}
+
+export async function screendayListDays(
+  limit = 30,
+): Promise<ScreenDaySummaryDto[]> {
+  const raw = await invokeWithFallback<unknown>(
+    "screenday_list_days",
+    { limit },
+    () => [],
+  );
+  return Array.isArray(raw) ? raw.map(normalizeScreenDaySummary) : [];
+}
+
+export async function screendayGetDay(
+  dayKey: string,
+): Promise<ScreenDayDetailDto | null> {
+  const raw = await invokeWithFallback<unknown>(
+    "screenday_get_day",
+    {
+      dayKey,
+      day_key: dayKey,
+    },
+    () => null,
+  );
+  return normalizeScreenDayDetail(raw);
+}
+
+export async function screendayGenerateSummary(
+  dayKey: string,
+): Promise<ScreenDayDetailDto | null> {
+  const raw = await invokeWithFallback<unknown>(
+    "screenday_generate_summary",
+    {
+      dayKey,
+      day_key: dayKey,
+    },
+    () => null,
+  );
+  return normalizeScreenDayDetail(raw);
+}
+
+export function onScreenDayFrame(
+  handler: (frame: ScreenDayFrameDto) => void,
+): Promise<UnlistenFn> {
+  return safeListen<unknown>("screenday-frame", (payload) => {
+    if (isRecord(payload)) {
+      handler(normalizeScreenDayFrame(payload));
+    }
+  });
+}
+
+export interface TestBrainConnectionOptions {
+  brain: string;
+  provider?: ApiProvider | string | null;
+  model?: string | null;
+  base_url?: string | null;
+}
+
+export async function testBrainConnection(
+  brainOrOpts: string | TestBrainConnectionOptions,
+  provider?: ApiProvider | string | null,
+  model?: string | null,
+  baseUrl?: string | null,
+): Promise<ConnectionTestResult> {
+  const opts: TestBrainConnectionOptions =
+    typeof brainOrOpts === "string"
+      ? {
+          brain: brainOrOpts,
+          provider: provider ?? null,
+          model: model ?? null,
+          base_url: baseUrl ?? null,
+        }
+      : brainOrOpts;
+
+  try {
+    const raw = await invoke<unknown>("test_brain_connection", {
+      brain: opts.brain,
+      provider: opts.provider ?? null,
+      model: opts.model ?? null,
+      baseUrl: opts.base_url ?? null,
+      base_url: opts.base_url ?? null,
+    });
+    const obj = isRecord(raw) ? raw : {};
+    return {
+      ok: Boolean(obj.ok),
+      brain: typeof obj.brain === "string" ? obj.brain : opts.brain,
+      provider:
+        typeof obj.provider === "string"
+          ? obj.provider
+          : (opts.provider ?? null),
+      model: typeof obj.model === "string" ? obj.model : (opts.model ?? null),
+      latency_ms: Math.max(0, Number(obj.latency_ms) || 0),
+      message:
+        typeof obj.message === "string"
+          ? obj.message
+          : Boolean(obj.ok)
+            ? "Connection successful"
+            : "Connection failed",
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      brain: opts.brain,
+      provider: opts.provider ?? null,
+      model: opts.model ?? null,
+      latency_ms: 0,
+      message:
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : "Desktop runtime unavailable (browser mode)",
+    };
+  }
+}
+
+function computeAverageLatency(samples: LatencyBreakdown[]): LatencyBreakdown | null {
+  if (samples.length === 0) return null;
+  const sums = samples.reduce(
+    (acc, item) => ({
+      capture_ms: acc.capture_ms + item.capture_ms,
+      grounding_ms: acc.grounding_ms + item.grounding_ms,
+      memory_ms: acc.memory_ms + item.memory_ms,
+      llm_ms: acc.llm_ms + item.llm_ms,
+      total_ms: acc.total_ms + item.total_ms,
+    }),
+    { capture_ms: 0, grounding_ms: 0, memory_ms: 0, llm_ms: 0, total_ms: 0 },
+  );
+  const n = samples.length;
+  return {
+    capture_ms: Math.round(sums.capture_ms / n),
+    grounding_ms: Math.round(sums.grounding_ms / n),
+    memory_ms: Math.round(sums.memory_ms / n),
+    llm_ms: Math.round(sums.llm_ms / n),
+    total_ms: Math.round(sums.total_ms / n),
+  };
+}
+
+export async function getLatencyStats(limit = 25): Promise<LatencyStats> {
+  const raw = await invokeWithFallback<unknown>(
+    "get_latency_stats",
+    { limit },
+    () => ({ recent: [], average: null, count: 0 }),
+  );
+  if (Array.isArray(raw)) {
+    const recent = raw
+      .map(normalizeLatency)
+      .filter((x): x is LatencyBreakdown => x !== null);
+    return {
+      recent,
+      average: computeAverageLatency(recent),
+      count: recent.length,
+    };
+  }
+  const obj = isRecord(raw) ? raw : {};
+  const rawList = Array.isArray(obj.recent)
+    ? obj.recent
+    : Array.isArray(obj.samples)
+      ? obj.samples
+      : [];
+  const recent = rawList
+    .map(normalizeLatency)
+    .filter((x): x is LatencyBreakdown => x !== null);
+  const average = normalizeLatency(obj.average) ?? computeAverageLatency(recent);
+  const count =
+    typeof obj.count === "number" ? Math.max(0, obj.count) : recent.length;
+  return { recent, average, count };
 }

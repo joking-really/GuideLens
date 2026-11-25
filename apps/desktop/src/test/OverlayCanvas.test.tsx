@@ -148,4 +148,76 @@ describe("OverlayCanvas", () => {
     expect(lens).toHaveAttribute("data-zoom", "2.5");
     expect(screen.getByTestId("magnifier-zoom-badge")).toHaveTextContent("2.5×");
   });
+
+  it("renders wandering companion with Screen Day diary indicator on overlay-empty and stays click-through", async () => {
+    render(<OverlayCanvas />);
+    expect(screen.getByTestId("overlay-empty")).toBeInTheDocument();
+
+    await act(async () => {
+      mocks.emitMockEvent("overlay-companion", {
+        mode: "wander",
+        companion_id: "tech_nerd",
+        emotion: "peeking",
+        wander: true,
+        x: null,
+        y: null,
+        bubble_text: "Recording Screen Day",
+        screenday_recording: true,
+      });
+    });
+
+    const emptyRoot = screen.getByTestId("overlay-empty");
+    expect(emptyRoot.className).toContain("pointer-events-none");
+
+    const sprite = screen.getByTestId("companion-sprite");
+    expect(sprite).toHaveAttribute("data-companion", "tech_nerd");
+    expect(sprite).toHaveAttribute("data-emotion", "peeking");
+    expect(screen.getByTestId("screenday-companion-indicator")).toHaveTextContent("Diary");
+    expect(screen.getByTestId("companion-speech-bubble")).toHaveTextContent("Recording Screen Day");
+  });
+
+  it("anchors companion speech bubble with action/shortcut badges and handles bonk & preview celebrate", async () => {
+    render(<OverlayCanvas />);
+
+    await act(async () => {
+      mocks.emitMockEvent("step-changed", {
+        step: {
+          step_number: 1,
+          instruction_line: "Open Export settings",
+          confidence: 0.92,
+          shortcut: "Ctrl+E",
+          action_kind: "click",
+          companion_emotion: "bonk",
+          rect_px: { x: 420, y: 240, w: 96, h: 36 },
+          source: "som",
+        },
+        index: 0,
+        total: 2,
+      });
+    });
+
+    const sprite = screen.getByTestId("companion-sprite");
+    expect(sprite).toHaveAttribute("data-emotion", "bonk");
+    expect(screen.getByTestId("companion-fx-bonk")).toBeInTheDocument();
+    expect(screen.getByTestId("companion-shortcut-badge")).toHaveTextContent("Ctrl+E");
+    expect(screen.getByTestId("companion-action-badge")).toHaveTextContent("Click");
+
+    await act(async () => {
+      mocks.emitMockEvent("overlay-cleared", {});
+      mocks.emitMockEvent("overlay-companion", {
+        mode: "preview",
+        companion_id: "anime_guide",
+        emotion: "celebrate",
+        wander: false,
+        x: null,
+        y: null,
+        bubble_text: "Goal complete!",
+        screenday_recording: false,
+      });
+    });
+
+    expect(screen.getByTestId("companion-sprite")).toHaveAttribute("data-companion", "anime_guide");
+    expect(screen.getByTestId("companion-sprite")).toHaveAttribute("data-emotion", "celebrate");
+    expect(screen.getByTestId("companion-fx-celebrate")).toBeInTheDocument();
+  });
 });

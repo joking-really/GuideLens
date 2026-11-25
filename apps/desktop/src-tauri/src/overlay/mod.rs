@@ -1,6 +1,7 @@
 use crate::db::DbState;
 use crate::types::{
-    MonitorInfo, RectPx, ResolvedStep, StepChangedPayload, StepMode, StepSource,
+    MonitorInfo, OverlayCompanionPayload, RectPx, ResolvedStep, StepChangedPayload, StepMode,
+    StepSource,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
@@ -115,6 +116,110 @@ pub fn configure_overlay_window(app: &AppHandle) {
     }
 }
 
+/// Ensures the overlay window is click-through and visible (unless companion is hidden) and emits `overlay-companion`.
+pub fn emit_overlay_companion(
+    app: &AppHandle,
+    payload: OverlayCompanionPayload,
+) -> Result<(), String> {
+    if !payload.companion_id.trim().eq_ignore_ascii_case("none") && payload.mode != "hidden" {
+        configure_overlay_window(app);
+        if let Some(overlay_win) = app.get_webview_window("overlay") {
+            let _ = overlay_win.show();
+        }
+    }
+    app.emit("overlay-companion", payload)
+        .map_err(|e| format!("Failed to emit overlay-companion: {}", e))
+}
+
+/// IPC command allowing Control Center / Companion Studio to preview companion poses and bubbles on Surface 1.
+#[tauri::command]
+pub fn preview_companion(
+    app: AppHandle,
+    companion_id: String,
+    emotion: Option<String>,
+    bubble_text: Option<String>,
+) -> Result<(), String> {
+    let settings = app
+        .try_state::<DbState>()
+        .and_then(|db| db.get_settings().ok())
+        .unwrap_or_default();
+
+    let clean_id = if companion_id.trim().is_empty() {
+        settings.companion_id.clone()
+    } else {
+        companion_id.trim().to_string()
+    };
+
+    let mode = if clean_id.eq_ignore_ascii_case("none") {
+        "hidden".to_string()
+    } else {
+        "preview".to_string()
+    };
+
+    let payload = OverlayCompanionPayload {
+        mode,
+        companion_id: clean_id,
+        emotion: emotion
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty())
+            .unwrap_or_else(|| "happy".to_string()),
+        wander: settings.companion_wander,
+        x: None,
+        y: None,
+        bubble_text: bubble_text.and_then(|b| {
+            let trimmed = b.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        }),
+        screenday_recording: settings.screenday_enabled,
+    };
+
+    emit_overlay_companion(&app, payload)
+}
+
+fn emit_step_companion(app: &AppHandle, step: &ResolvedStep) {
+    let settings = app
+        .try_state::<DbState>()
+        .and_then(|db| db.get_settings().ok())
+        .unwrap_or_default();
+    if settings.companion_id.trim().eq_ignore_ascii_case("none") {
+        return;
+    }
+
+    let emotion = step
+        .companion_emotion
+        .clone()
+        .unwrap_or_else(|| {
+            if step.goal_complete {
+                "celebrate".to_string()
+            } else if step.rect_px.is_some() {
+                "pointing".to_string()
+            } else {
+                "thinking".to_string()
+            }
+        });
+
+    let (x, y) = step
+        .rect_px
+        .map(|r| (Some(r.x + r.w / 2), Some(r.y)))
+        .unwrap_or((None, None));
+
+    let payload = OverlayCompanionPayload {
+        mode: if step.goal_complete {
+            "celebrate".to_string()
+        } else {
+            "guiding".to_string()
+        },
+        companion_id: settings.companion_id,
+        emotion,
+        wander: settings.companion_wander,
+        x,
+        y,
+        bubble_text: Some(step.instruction_line.clone()),
+        screenday_recording: settings.screenday_enabled,
+    };
+    let _ = app.emit("overlay-companion", payload);
+}
+
 fn emit_current_step(app: &AppHandle, guidance: &ActiveGuidance) -> Result<(), String> {
     let Some(step) = guidance.steps.get(guidance.current_index).cloned() else {
         return Ok(());
@@ -123,6 +228,7 @@ fn emit_current_step(app: &AppHandle, guidance: &ActiveGuidance) -> Result<(), S
         .rect_px
         .map(|r| r.w > 0 && r.h > 0 && (r.w < 24 || r.h < 24))
         .unwrap_or(false);
+    emit_step_companion(app, &step);
     let payload = StepChangedPayload {
         step,
         index: guidance.current_index,
@@ -156,7 +262,7 @@ pub fn start_guidance(
             step.step_number = (idx + 1) as u32;
         }
         step.instruction_line = crate::types::Step::clamp_instruction(&step.instruction_line);
-        if step.confidence < 0.5 && step.source != StepSource::Uia {
+        if step.confidence < 0.5 && !matches!(step.source, StepSource::Uia | StepSource::Som) {
             step.rect_px = None;
             step.source = StepSource::None;
         }
@@ -253,17 +359,47 @@ pub fn advance_step(app: &AppHandle) -> Result<Option<ResolvedStep>, String> {
             Ok(step)
         }
         None => {
-            crate::input::release_overlay_hooks();
-            if let Some(overlay_win) = app.get_webview_window("overlay") {
-                let _ = overlay_win.hide();
-            }
-            let _ = app.emit("overlay-cleared", ());
+            clear_overlay_visuals_only(app);
             Ok(None)
         }
     }
 }
 
-/// Clears active overlay guidance, releases global hooks, and emits `overlay-cleared`.
+fn clear_overlay_visuals_only(app: &AppHandle) {
+    crate::input::release_overlay_hooks_if_idle(app);
+
+    let settings = app
+        .try_state::<DbState>()
+        .and_then(|db| db.get_settings().ok())
+        .unwrap_or_default();
+
+    if !settings.screenday_enabled || settings.companion_id.trim().eq_ignore_ascii_case("none") {
+        if let Some(overlay_win) = app.get_webview_window("overlay") {
+            let _ = overlay_win.hide();
+        }
+    } else {
+        let _ = app.emit(
+            "overlay-companion",
+            OverlayCompanionPayload {
+                mode: if settings.companion_wander {
+                    "wander".to_string()
+                } else {
+                    "idle".to_string()
+                },
+                companion_id: settings.companion_id,
+                emotion: "peeking".to_string(),
+                wander: settings.companion_wander,
+                x: None,
+                y: None,
+                bubble_text: None,
+                screenday_recording: settings.screenday_enabled,
+            },
+        );
+    }
+    let _ = app.emit("overlay-cleared", ());
+}
+
+/// Clears active overlay guidance, releases global hooks (when no live session is guiding), and emits `overlay-cleared`.
 pub fn clear_overlay_state(app: &AppHandle) -> Result<(), String> {
     if let Some(state) = app.try_state::<OverlayState>() {
         if let Ok(mut guard) = state.inner.lock() {
@@ -272,11 +408,7 @@ pub fn clear_overlay_state(app: &AppHandle) -> Result<(), String> {
             guard.current_index = 0;
         }
     }
-    crate::input::release_overlay_hooks();
-    if let Some(overlay_win) = app.get_webview_window("overlay") {
-        let _ = overlay_win.hide();
-    }
-    let _ = app.emit("overlay-cleared", ());
+    clear_overlay_visuals_only(app);
     Ok(())
 }
 
@@ -324,6 +456,10 @@ pub fn show_terminal_command(
         terminal_command: Some(command),
         explanation: Some(clamped_exp),
         spoken_text: None,
+        target_id: None,
+        action_kind: Some("explain".to_string()),
+        companion_emotion: Some("pointing".to_string()),
+        goal_complete: false,
         rect_px: None,
         source: StepSource::None,
     };
@@ -334,4 +470,101 @@ pub fn show_terminal_command(
 
     let _ = start_guidance(app, vec![step], StepMode::Terminal, None, None, None)?;
     Ok(())
+}
+
+/// Syncs idle companion visibility/peek mode with updated settings when overlay guidance is not active.
+pub fn sync_companion_with_settings(app: &AppHandle, settings: &crate::types::Settings) {
+    let overlay_busy = app
+        .try_state::<OverlayState>()
+        .map(|s| s.is_active())
+        .unwrap_or(false);
+    if overlay_busy {
+        return;
+    }
+
+    if settings.companion_id.trim().eq_ignore_ascii_case("none") || !settings.screenday_enabled {
+        let _ = app.emit(
+            "overlay-companion",
+            OverlayCompanionPayload {
+                mode: "hidden".to_string(),
+                companion_id: settings.companion_id.clone(),
+                emotion: "idle".to_string(),
+                wander: settings.companion_wander,
+                x: None,
+                y: None,
+                bubble_text: None,
+                screenday_recording: settings.screenday_enabled,
+            },
+        );
+        if let Some(overlay_win) = app.get_webview_window("overlay") {
+            let _ = overlay_win.hide();
+        }
+    } else {
+        let _ = emit_overlay_companion(
+            app,
+            OverlayCompanionPayload {
+                mode: if settings.companion_wander {
+                    "wander".to_string()
+                } else {
+                    "idle".to_string()
+                },
+                companion_id: settings.companion_id.clone(),
+                emotion: "peeking".to_string(),
+                wander: settings.companion_wander,
+                x: None,
+                y: None,
+                bubble_text: None,
+                screenday_recording: settings.screenday_enabled,
+            },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_state_tracks_active_rect_and_step() {
+        let state = OverlayState::new();
+        assert!(!state.is_active());
+        assert_eq!(state.current_rect(), None);
+        assert_eq!(state.current_step(), None);
+
+        let rect = RectPx {
+            x: 100,
+            y: 200,
+            w: 120,
+            h: 36,
+        };
+        let step = ResolvedStep {
+            step_number: 1,
+            instruction_line: "Click Export".to_string(),
+            target_name: Some("Export".to_string()),
+            control_type: Some("Button".to_string()),
+            bbox: None,
+            confidence: 0.9,
+            shortcut: None,
+            terminal_command: None,
+            explanation: None,
+            spoken_text: Some("Tap Export!".to_string()),
+            target_id: Some(4),
+            action_kind: Some("click".to_string()),
+            companion_emotion: Some("pointing".to_string()),
+            goal_complete: false,
+            rect_px: Some(rect),
+            source: StepSource::Som,
+        };
+
+        {
+            let mut guard = state.inner.lock().unwrap();
+            guard.steps = vec![step.clone()];
+            guard.current_index = 0;
+            guard.active = true;
+        }
+
+        assert!(state.is_active());
+        assert_eq!(state.current_rect(), Some(rect));
+        assert_eq!(state.current_step(), Some(step));
+    }
 }

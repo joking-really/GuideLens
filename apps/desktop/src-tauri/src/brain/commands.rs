@@ -1,22 +1,27 @@
 //! Tauri IPC commands exposed by the `brain` module (`decisions.md` §4 & §6).
 
-use crate::brain::agent_cli::{self, DetectedAgent};
-use crate::brain::byo_api::transcribe_with_whisper_api;
+use crate::brain::agent_cli::DetectedAgent;
+use crate::brain::byo_api::{test_brain_connection_impl, transcribe_with_whisper_api};
 use crate::brain::groq_pro::{self, AuthStatus, CheckoutResponse, CloudEndpoints};
 use crate::brain::ollama::{self, resolve_ollama_base_url, OllamaStatus};
 use crate::brain::router::{
-    build_brain_request, resolve_brain_order, route_and_execute, BrainRoutingInput,
+    build_grounded_brain_request, resolve_brain_order, route_and_execute, BrainRoutingInput,
     CaptureContext, ProviderOverrides, RouteExecutionContext,
 };
-use crate::brain::BrainState;
+use crate::brain::{BrainState, LatencyStats};
 use crate::db::{unix_now, DbState};
-use crate::locator::resolve_step_plan;
 use crate::overlay;
-use crate::types::{AskResponse, BrainKind, BrainStatusPayload};
+use crate::types::{
+    AskResponse, BrainKind, BrainStatusPayload, ConnectionTestResult, LatencyBreakdown,
+    LiveSessionTurn,
+};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
+
+pub use crate::brain::byo_api::generate_day_summary_text;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscribeResponse {
@@ -39,6 +44,35 @@ fn emit_brain_status(
     );
 }
 
+pub(crate) fn allocate_capture_path() -> std::path::PathBuf {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    crate::capture::captures_dir().join(format!(
+        "capture_{}_{}.jpg",
+        ts,
+        Uuid::new_v4().simple()
+    ))
+}
+
+pub(crate) fn save_raw_capture_async(
+    path: std::path::PathBuf,
+    raw_image: image::RgbaImage,
+    fallback_jpeg: Vec<u8>,
+) {
+    tokio::spawn(async move {
+        let bytes = tokio::task::spawn_blocking(move || {
+            crate::capture::encode_rgba_as_jpeg(&raw_image, 82).unwrap_or(fallback_jpeg)
+        })
+        .await
+        .unwrap_or_default();
+        if !bytes.is_empty() {
+            crate::capture::save_bytes_async(path, bytes);
+        }
+    });
+}
+
 /// Primary AI guidance IPC command (`ask(query, brain?)`).
 #[tauri::command]
 pub async fn ask(
@@ -53,24 +87,39 @@ pub async fn ask(
         return Err("Query must not be empty".to_string());
     }
 
+    let total_started = Instant::now();
+
     emit_brain_status(
         &app,
         "capturing",
         brain,
-        Some("Capturing active window...".to_string()),
+        Some("Capturing & grounding active window...".to_string()),
     );
 
-    let app_for_cap = app.clone();
-    let capture = tokio::task::spawn_blocking(move || crate::capture::capture_active(&app_for_cap))
-        .await
-        .map_err(|e| format!("Screen capture task failed: {}", e))??;
+    let prepared = crate::grounding::capture_and_ground(Some(&app)).await?;
+    let capture_file = allocate_capture_path();
+    let capture_path = capture_file.to_string_lossy().to_string();
+    save_raw_capture_async(
+        capture_file,
+        prepared.raw_image_for_save,
+        prepared.som_jpeg_bytes.clone(),
+    );
 
     let settings = db.get_settings().unwrap_or_default();
-    let app_pref_brain = crate::db::get_app_preference(&db, &capture.active_app);
+    let app_pref_brain = crate::db::get_app_preference(&db, &prepared.snapshot.active_app);
     let cached_auth = brain_state.cached_auth.read().await.clone();
     let history = brain_state.recent_history();
 
-    let detected_agents = agent_cli::detect_agents();
+    let mem_started = Instant::now();
+    let memory_hints = crate::memory::retrieve_memory_hints(
+        &db,
+        &prepared.snapshot.active_app,
+        &prepared.snapshot.window_title,
+        &trimmed_query,
+    );
+    let memory_ms = mem_started.elapsed().as_millis() as u64;
+
+    let detected_agents = brain_state.detect_agents_cached(settings.custom_agent_cmd.as_deref());
     let (_, planned_order) = resolve_brain_order(&BrainRoutingInput {
         settings: &settings,
         app_preferred_brain: app_pref_brain.as_deref(),
@@ -88,15 +137,19 @@ pub async fn ask(
         Some(format!("Thinking with {}...", primary_brain.as_str())),
     );
 
-    let req = build_brain_request(
+    let req = build_grounded_brain_request(
         &trimmed_query,
         CaptureContext {
-            image_base64: capture.image_base64.clone(),
-            image_path: capture.image_path.clone(),
-            active_app: capture.active_app.clone(),
-            window_title: capture.window_title.clone(),
-            screen_resolution: (capture.monitor.w, capture.monitor.h),
+            image_base64: prepared.som_image_base64.clone(),
+            image_path: capture_path.clone(),
+            active_app: prepared.snapshot.active_app.clone(),
+            window_title: prepared.snapshot.window_title.clone(),
+            screen_resolution: (prepared.snapshot.monitor.w, prepared.snapshot.monitor.h),
         },
+        &prepared.snapshot.element_table_prompt,
+        &memory_hints,
+        &settings.companion_id,
+        false,
         history,
     );
 
@@ -105,6 +158,7 @@ pub async fn ask(
         ..Default::default()
     };
 
+    let llm_started = Instant::now();
     let (used_brain, mut plan) = match route_and_execute(
         &req,
         &RouteExecutionContext {
@@ -128,6 +182,7 @@ pub async fn ask(
             return Err(err_json);
         }
     };
+    let llm_ms = llm_started.elapsed().as_millis() as u64;
 
     plan.enforce_limits();
 
@@ -138,14 +193,25 @@ pub async fn ask(
         Some("Snapping to UI elements...".to_string()),
     );
 
-    let resolved_steps = resolve_step_plan(&plan, &capture.monitor, capture.hwnd).await;
+    let resolved_steps =
+        crate::grounding::resolve_plan_with_grounding(&plan, &prepared.snapshot).await;
+
+    let total_ms = total_started.elapsed().as_millis() as u64;
+    let latency = LatencyBreakdown {
+        capture_ms: prepared.snapshot.capture_ms,
+        grounding_ms: prepared.snapshot.grounding_ms,
+        memory_ms,
+        llm_ms,
+        total_ms,
+    };
+    brain_state.record_latency(latency);
 
     let session_id = Uuid::new_v4().to_string();
     let created_at = unix_now();
     if let Err(e) = crate::db::insert_session(
         &db,
         &session_id,
-        &capture.active_app,
+        &prepared.snapshot.active_app,
         &trimmed_query,
         used_brain,
         created_at,
@@ -161,7 +227,7 @@ pub async fn ask(
                 &step.instruction_line,
                 bbox_json.as_deref(),
                 step.terminal_command.as_deref(),
-                Some(&capture.image_path),
+                Some(&capture_path),
             ) {
                 log::warn!("Failed to persist step {}: {}", step.step_number, e);
             }
@@ -174,11 +240,54 @@ pub async fn ask(
         &app,
         resolved_steps.clone(),
         plan.mode,
-        Some(capture.image_path.clone()),
-        Some(capture.monitor.clone()),
+        Some(capture_path.clone()),
+        Some(prepared.snapshot.monitor.clone()),
         Some(session_id.clone()),
     ) {
         log::warn!("Failed to start overlay guidance: {}", e);
+    }
+
+    let ask_turns: Vec<LiveSessionTurn> = resolved_steps
+        .iter()
+        .enumerate()
+        .map(|(idx, step)| LiveSessionTurn {
+            turn_number: if step.step_number > 0 {
+                step.step_number
+            } else {
+                (idx + 1) as u32
+            },
+            user_text: if idx == 0 {
+                Some(trimmed_query.clone())
+            } else {
+                None
+            },
+            instruction_line: step.instruction_line.clone(),
+            spoken_text: step.spoken_text.clone(),
+            action_kind: step.action_kind.clone(),
+            companion_emotion: step.companion_emotion.clone(),
+            target_name: step.target_name.clone(),
+            rect_px: step.rect_px,
+            active_app: prepared.snapshot.active_app.clone(),
+            window_title: prepared.snapshot.window_title.clone(),
+            latency: if idx == 0 { Some(latency) } else { None },
+            timestamp: created_at,
+        })
+        .collect();
+
+    if let Err(e) = crate::memory::record_session_and_write_graph(
+        &db,
+        &session_id,
+        &prepared.snapshot.active_app,
+        &trimmed_query,
+        &resolved_steps,
+        &ask_turns,
+        true,
+    ) {
+        log::warn!(
+            "Failed to record Knowledge Graph for session {}: {}",
+            session_id,
+            e
+        );
     }
 
     emit_brain_status(&app, "done", Some(used_brain), None);
@@ -188,9 +297,41 @@ pub async fn ask(
         brain: used_brain,
         plan,
         resolved_steps,
-        capture_path: Some(capture.image_path),
-        monitor: Some(capture.monitor),
+        capture_path: Some(capture_path),
+        monitor: Some(prepared.snapshot.monitor),
+        latency: Some(latency),
     })
+}
+
+/// Tests a configured brain/provider/model with a real lightweight roundtrip and returns latency.
+#[tauri::command]
+pub async fn test_brain_connection(
+    db: State<'_, DbState>,
+    brain_state: State<'_, BrainState>,
+    brain: String,
+    provider: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
+) -> Result<ConnectionTestResult, String> {
+    let settings = db.get_settings().unwrap_or_default();
+    Ok(test_brain_connection_impl(
+        &settings,
+        &brain_state,
+        &brain,
+        provider.as_deref(),
+        model.as_deref(),
+        base_url.as_deref(),
+    )
+    .await)
+}
+
+/// Returns recent and averaged latency breakdown samples across `ask` and live session turns.
+#[tauri::command]
+pub fn get_latency_stats(
+    brain_state: State<'_, BrainState>,
+    limit: Option<usize>,
+) -> Result<LatencyStats, String> {
+    Ok(brain_state.latency_stats(limit.unwrap_or(25)))
 }
 
 /// Stores a BYO API key in Windows Credential Manager via `keyring` (never SQLite or logs).
@@ -235,10 +376,17 @@ pub async fn ollama_pull(app: AppHandle, model: String) -> Result<(), String> {
     .await
 }
 
-/// Detects installed headless coding agent CLIs (`claude`, `codex`, `gemini`, `agy`, `hermes`) on PATH.
+/// Detects installed headless coding agent CLIs (`claude`, `codex`, `gemini`, `agy`, `copilot`, `opencode`, `hermes`, `custom`) with a 60s cache.
 #[tauri::command]
-pub fn detect_agents() -> Result<Vec<DetectedAgent>, String> {
-    Ok(agent_cli::detect_agents())
+pub fn detect_agents(
+    db: State<'_, DbState>,
+    brain_state: State<'_, BrainState>,
+) -> Result<Vec<DetectedAgent>, String> {
+    let custom_cmd = db
+        .get_settings()
+        .ok()
+        .and_then(|s| s.custom_agent_cmd);
+    Ok(brain_state.detect_agents_cached(custom_cmd.as_deref()))
 }
 
 /// Signs into Supabase Auth (GoTrue) and stores the refresh + access tokens in Credential Manager.

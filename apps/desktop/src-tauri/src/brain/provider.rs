@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BrainRequest {
     pub query: String,
     pub image_base64: String,
@@ -16,6 +16,8 @@ pub struct BrainRequest {
     pub system_prompt: String,
     pub user_prompt: String,
     pub conversation_history: Vec<String>,
+    pub has_som: bool,
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

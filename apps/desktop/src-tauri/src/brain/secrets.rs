@@ -1,12 +1,20 @@
-//! Secure credential storage backed by Windows Credential Manager (`keyring` crate).
+//! Secure credential storage backed by Windows Credential Manager (`keyring` crate),
+//! accelerated by an in-memory `RwLock` cache invalidated immediately on writes/deletes.
 //! Never stores API keys or tokens in SQLite, plain-text files, or logs.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 pub const KEYRING_SERVICE: &str = "com.guidelens.desktop";
-pub const SUPPORTED_BYO_PROVIDERS: [&str; 5] =
-    ["gemini", "openai", "anthropic", "groq", "openrouter"];
+pub const SUPPORTED_BYO_PROVIDERS: [&str; 7] = [
+    "gemini",
+    "openai",
+    "anthropic",
+    "groq",
+    "openrouter",
+    "deepseek",
+    "custom_openai",
+];
 
 const ACCOUNT_REFRESH_TOKEN: &str = "supabase_refresh_token";
 const ACCOUNT_ACCESS_TOKEN: &str = "supabase_access_token";
@@ -107,6 +115,8 @@ impl SecretBackend for MemorySecretBackend {
 #[derive(Clone)]
 pub struct SecretStore {
     backend: Arc<dyn SecretBackend>,
+    api_key_cache: Arc<RwLock<HashMap<String, Option<String>>>>,
+    providers_list_cache: Arc<RwLock<Option<Vec<String>>>>,
 }
 
 impl Default for SecretStore {
@@ -123,14 +133,18 @@ impl std::fmt::Debug for SecretStore {
 
 impl SecretStore {
     pub fn new_keyring() -> Self {
-        Self {
-            backend: Arc::new(KeyringSecretBackend),
-        }
+        Self::with_backend(Arc::new(KeyringSecretBackend))
     }
 
     pub fn new_memory() -> Self {
+        Self::with_backend(Arc::new(MemorySecretBackend::new()))
+    }
+
+    pub fn with_backend(backend: Arc<dyn SecretBackend>) -> Self {
         Self {
-            backend: Arc::new(MemorySecretBackend::new()),
+            backend,
+            api_key_cache: Arc::new(RwLock::new(HashMap::new())),
+            providers_list_cache: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -153,29 +167,68 @@ impl SecretStore {
         Ok(format!("byo_api_key:{}", norm))
     }
 
+    fn invalidate_caches(&self, norm_provider: &str) {
+        if let Ok(mut cache) = self.api_key_cache.write() {
+            cache.remove(norm_provider);
+        }
+        if let Ok(mut list_cache) = self.providers_list_cache.write() {
+            *list_cache = None;
+        }
+    }
+
     pub fn set_api_key(&self, provider: &str, key: &str) -> Result<(), String> {
-        let account = Self::api_key_account(provider)?;
+        let norm = Self::normalize_provider(provider)?;
+        let account = format!("byo_api_key:{}", norm);
         let trimmed = key.trim();
         if trimmed.is_empty() {
             return Err("API key must not be empty".to_string());
         }
-        self.backend.set_secret(&account, trimmed)
+        self.backend.set_secret(&account, trimmed)?;
+        if let Ok(mut cache) = self.api_key_cache.write() {
+            cache.insert(norm.to_string(), Some(trimmed.to_string()));
+        }
+        if let Ok(mut list_cache) = self.providers_list_cache.write() {
+            *list_cache = None;
+        }
+        Ok(())
     }
 
     pub fn get_api_key(&self, provider: &str) -> Result<Option<String>, String> {
-        let account = Self::api_key_account(provider)?;
-        if let Ok(Some(key)) = self.backend.get_secret(&account) {
-            let trimmed = key.trim().to_string();
-            if !trimmed.is_empty() {
-                return Ok(Some(trimmed));
+        let norm = Self::normalize_provider(provider)?;
+        if let Ok(cache) = self.api_key_cache.read() {
+            if let Some(cached) = cache.get(norm) {
+                return Ok(cached.clone());
             }
         }
 
-        let env_key = format!("{}_API_KEY", provider.trim().to_ascii_uppercase());
+        let account = format!("byo_api_key:{}", norm);
+        let backend_res = self.backend.get_secret(&account);
+        if let Ok(Some(ref key)) = backend_res {
+            let trimmed = key.trim().to_string();
+            if !trimmed.is_empty() {
+                let val = Some(trimmed);
+                if let Ok(mut cache) = self.api_key_cache.write() {
+                    cache.insert(norm.to_string(), val.clone());
+                }
+                return Ok(val);
+            }
+        }
+
+        let env_key = format!("{}_API_KEY", norm.to_ascii_uppercase());
         if let Ok(val) = std::env::var(&env_key) {
             let trimmed = val.trim().to_string();
             if !trimmed.is_empty() {
-                return Ok(Some(trimmed));
+                let res = Some(trimmed);
+                if let Ok(mut cache) = self.api_key_cache.write() {
+                    cache.insert(norm.to_string(), res.clone());
+                }
+                return Ok(res);
+            }
+        }
+
+        if backend_res.is_ok() {
+            if let Ok(mut cache) = self.api_key_cache.write() {
+                cache.insert(norm.to_string(), None);
             }
         }
 
@@ -183,16 +236,28 @@ impl SecretStore {
     }
 
     pub fn delete_api_key(&self, provider: &str) -> Result<(), String> {
-        let account = Self::api_key_account(provider)?;
-        self.backend.delete_secret(&account)
+        let norm = Self::normalize_provider(provider)?;
+        let account = Self::api_key_account(norm)?;
+        self.backend.delete_secret(&account)?;
+        self.invalidate_caches(norm);
+        Ok(())
     }
 
     pub fn list_api_key_providers(&self) -> Result<Vec<String>, String> {
+        if let Ok(list_cache) = self.providers_list_cache.read() {
+            if let Some(ref cached) = *list_cache {
+                return Ok(cached.clone());
+            }
+        }
+
         let mut present = Vec::new();
         for &provider in &SUPPORTED_BYO_PROVIDERS {
             if let Ok(Some(_)) = self.get_api_key(provider) {
                 present.push(provider.to_string());
             }
+        }
+        if let Ok(mut list_cache) = self.providers_list_cache.write() {
+            *list_cache = Some(present.clone());
         }
         Ok(present)
     }
@@ -240,6 +305,36 @@ impl SecretStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingBackend {
+        inner: MemorySecretBackend,
+        reads: AtomicUsize,
+    }
+
+    impl CountingBackend {
+        fn new() -> Self {
+            Self {
+                inner: MemorySecretBackend::new(),
+                reads: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl SecretBackend for CountingBackend {
+        fn get_secret(&self, account: &str) -> Result<Option<String>, String> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            self.inner.get_secret(account)
+        }
+
+        fn set_secret(&self, account: &str, value: &str) -> Result<(), String> {
+            self.inner.set_secret(account, value)
+        }
+
+        fn delete_secret(&self, account: &str) -> Result<(), String> {
+            self.inner.delete_secret(account)
+        }
+    }
 
     #[test]
     fn stores_lists_and_deletes_byo_keys_and_tokens() {
@@ -248,16 +343,24 @@ mod tests {
 
         store.set_api_key("Gemini", "AIza-fake-test-key").unwrap();
         store.set_api_key("openai", "sk-fake-test-key").unwrap();
+        store.set_api_key("deepseek", "ds-fake-test-key").unwrap();
+        store.set_api_key("custom_openai", "cust-fake-test-key").unwrap();
 
         let providers = store.list_api_key_providers().unwrap();
-        assert_eq!(providers, vec!["gemini", "openai"]);
+        assert_eq!(
+            providers,
+            vec!["gemini", "openai", "deepseek", "custom_openai"]
+        );
         assert_eq!(
             store.get_api_key("gemini").unwrap().as_deref(),
             Some("AIza-fake-test-key")
         );
 
         store.delete_api_key("gemini").unwrap();
-        assert_eq!(store.list_api_key_providers().unwrap(), vec!["openai"]);
+        assert_eq!(
+            store.list_api_key_providers().unwrap(),
+            vec!["openai", "deepseek", "custom_openai"]
+        );
         assert!(store.set_api_key("invalid_provider", "abc").is_err());
 
         store
@@ -278,5 +381,36 @@ mod tests {
         store.clear_auth_tokens().unwrap();
         assert_eq!(store.get_access_token().unwrap(), None);
         assert_eq!(store.get_refresh_token().unwrap(), None);
+    }
+
+    #[test]
+    fn in_memory_cache_avoids_repeat_backend_reads_and_invalidates_on_write() {
+        let backend = Arc::new(CountingBackend::new());
+        let store = SecretStore::with_backend(backend.clone());
+
+        assert_eq!(store.list_api_key_providers().unwrap(), Vec::<String>::new());
+        let initial_reads = backend.reads.load(Ordering::SeqCst);
+        assert_eq!(initial_reads, SUPPORTED_BYO_PROVIDERS.len());
+
+        // Subsequent calls hit cache without touching backend
+        for _ in 0..5 {
+            assert_eq!(store.list_api_key_providers().unwrap(), Vec::<String>::new());
+            assert_eq!(store.get_api_key("groq").unwrap(), None);
+        }
+        assert_eq!(backend.reads.load(Ordering::SeqCst), initial_reads);
+
+        // set_api_key immediately updates cache & invalidates list cache
+        store.set_api_key("groq", "gsk_cached").unwrap();
+        assert_eq!(
+            store.get_api_key("groq").unwrap().as_deref(),
+            Some("gsk_cached")
+        );
+        assert_eq!(store.list_api_key_providers().unwrap(), vec!["groq"]);
+        assert_eq!(backend.reads.load(Ordering::SeqCst), initial_reads);
+
+        // delete_api_key invalidates cache immediately
+        store.delete_api_key("groq").unwrap();
+        assert_eq!(store.get_api_key("groq").unwrap(), None);
+        assert_eq!(store.list_api_key_providers().unwrap(), Vec::<String>::new());
     }
 }

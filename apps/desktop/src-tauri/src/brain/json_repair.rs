@@ -1,4 +1,4 @@
-//! JSON extraction, syntax repair, and StepPlan schema validation (`decisions.md` §3).
+//! JSON extraction, syntax repair, and StepPlan schema validation (`decisions.md` §3 + v2 SoM/companion fields).
 
 use crate::types::{Step, StepMode, StepPlan, MAX_INSTRUCTION_CHARS};
 use serde_json::Value;
@@ -243,6 +243,44 @@ fn parse_f64_loose(v: &Value) -> Option<f64> {
     }
 }
 
+fn parse_target_id(v: Option<&Value>) -> Option<u32> {
+    let raw = v?;
+    if raw.is_null() {
+        return None;
+    }
+    let parsed = if let Some(u) = raw.as_u64() {
+        u32::try_from(u).ok()
+    } else if let Some(i) = raw.as_i64() {
+        (i > 0).then_some(i as u32)
+    } else if let Some(f) = raw.as_f64() {
+        (f >= 1.0 && f.is_finite()).then(|| f.round() as u32)
+    } else if let Some(s) = raw.as_str() {
+        let cleaned = s.trim().trim_start_matches('[').trim_end_matches(']');
+        cleaned.parse::<u32>().ok()
+    } else {
+        None
+    };
+    parsed.filter(|&id| id > 0)
+}
+
+fn parse_bool_loose(v: Option<&Value>) -> bool {
+    let Some(raw) = v else {
+        return false;
+    };
+    if let Some(b) = raw.as_bool() {
+        b
+    } else if let Some(i) = raw.as_i64() {
+        i != 0
+    } else if let Some(s) = raw.as_str() {
+        matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "done" | "complete"
+        )
+    } else {
+        false
+    }
+}
+
 fn repair_bbox(v: Option<&Value>) -> Option<[f64; 4]> {
     let raw = v?;
     if raw.is_null() {
@@ -278,8 +316,8 @@ fn repair_bbox(v: Option<&Value>) -> Option<[f64; 4]> {
     None
 }
 
-fn repair_confidence(v: Option<&Value>, has_bbox: bool) -> f64 {
-    let default_conf = if has_bbox { 0.8 } else { 0.6 };
+fn repair_confidence(v: Option<&Value>, has_bbox_or_target: bool) -> f64 {
+    let default_conf = if has_bbox_or_target { 0.8 } else { 0.6 };
     let Some(val) = v else {
         return default_conf;
     };
@@ -310,6 +348,22 @@ fn clean_opt_string(v: Option<&Value>, max_chars: usize) -> Option<String> {
     }
 }
 
+fn normalize_companion_emotion(v: Option<&Value>) -> Option<String> {
+    let raw = clean_opt_string(v, 32)?.to_ascii_lowercase();
+    let normalized = match raw.as_str() {
+        "happy" | "joy" | "smile" => "happy",
+        "pointing" | "point" | "focus" => "pointing",
+        "bonk" | "oops" | "warning" | "error" => "bonk",
+        "curious" | "question" | "confused" => "curious",
+        "thinking" | "thought" | "working" => "thinking",
+        "celebrate" | "celebrating" | "party" | "success" => "celebrate",
+        "peeking" | "peek" | "idle" => "peeking",
+        "typing" | "walking" | "jumping" => raw.as_str(),
+        other => other,
+    };
+    Some(normalized.to_string())
+}
+
 pub fn repair_value_to_step_plan(root: &Value) -> Result<StepPlan, String> {
     let (raw_mode, raw_steps_vec): (Option<&str>, Vec<&Value>) = match root {
         Value::Object(map) => {
@@ -319,6 +373,7 @@ pub fn repair_value_to_step_plan(root: &Value) -> Result<StepPlan, String> {
             } else if map.contains_key("instruction_line")
                 || map.contains_key("instruction")
                 || map.contains_key("terminal_command")
+                || map.contains_key("target_id")
             {
                 (mode_str, vec![root])
             } else {
@@ -376,8 +431,12 @@ pub fn repair_value_to_step_plan(root: &Value) -> Result<StepPlan, String> {
             continue;
         }
 
+        let target_id = parse_target_id(obj.get("target_id").or_else(|| obj.get("element_id")));
         let initial_bbox = repair_bbox(obj.get("bbox"));
-        let confidence = repair_confidence(obj.get("confidence"), initial_bbox.is_some());
+        let confidence = repair_confidence(
+            obj.get("confidence"),
+            initial_bbox.is_some() || target_id.is_some(),
+        );
 
         // Per decisions.md §1 & non_functional_requirements.md §3:
         // If confidence < 0.5 -> text only, no misleading VLM highlight box.
@@ -395,6 +454,16 @@ pub fn repair_value_to_step_plan(root: &Value) -> Result<StepPlan, String> {
         let shortcut = clean_opt_string(obj.get("shortcut"), 40);
         let explanation = clean_opt_string(obj.get("explanation"), MAX_INSTRUCTION_CHARS);
         let spoken_text = clean_opt_string(obj.get("spoken_text"), MAX_INSTRUCTION_CHARS);
+        let action_kind = clean_opt_string(
+            obj.get("action_kind").or_else(|| obj.get("action")),
+            40,
+        )
+        .map(|s| s.to_ascii_lowercase());
+        let companion_emotion = normalize_companion_emotion(
+            obj.get("companion_emotion")
+                .or_else(|| obj.get("emotion")),
+        );
+        let goal_complete = parse_bool_loose(obj.get("goal_complete"));
 
         let step_number = (steps.len() + 1) as u32;
         steps.push(Step {
@@ -408,6 +477,10 @@ pub fn repair_value_to_step_plan(root: &Value) -> Result<StepPlan, String> {
             terminal_command,
             explanation,
             spoken_text,
+            target_id,
+            action_kind,
+            companion_emotion,
+            goal_complete,
         });
     }
 
@@ -473,6 +546,8 @@ mod tests {
             Some("Object Selection Tool")
         );
         assert_eq!(plan.steps[0].bbox, Some([12.0, 180.0, 32.0, 32.0]));
+        assert_eq!(plan.steps[0].target_id, None);
+        assert!(!plan.steps[0].goal_complete);
     }
 
     #[test]
@@ -596,5 +671,41 @@ Hope this helps!"#;
         assert_eq!(clamped.chars().count(), MAX_INSTRUCTION_CHARS);
         assert!(clamped.ends_with('…'));
         assert_eq!(plan.steps[2].spoken_text, None);
+    }
+
+    #[test]
+    fn parses_som_target_id_action_kind_emotion_and_goal_complete() {
+        let raw = r#"{
+            "mode": "guide",
+            "steps": [
+                {
+                    "instruction_line": "Click the New Chat button.",
+                    "target_id": "[14]",
+                    "target_name": "New Chat",
+                    "action_kind": "CLICK",
+                    "companion_emotion": "Pointing",
+                    "goal_complete": "false",
+                    "spoken_text": "Tap New Chat!"
+                },
+                {
+                    "instruction_line": "All set! Your repo is pushed.",
+                    "target_id": 0,
+                    "action_kind": "complete",
+                    "companion_emotion": "celebrating",
+                    "goal_complete": "true"
+                }
+            ]
+        }"#;
+
+        let plan = parse_and_repair_step_plan(raw).expect("SoM fields parse");
+        assert_eq!(plan.steps[0].target_id, Some(14));
+        assert_eq!(plan.steps[0].action_kind.as_deref(), Some("click"));
+        assert_eq!(plan.steps[0].companion_emotion.as_deref(), Some("pointing"));
+        assert!(!plan.steps[0].goal_complete);
+
+        assert_eq!(plan.steps[1].target_id, None);
+        assert_eq!(plan.steps[1].action_kind.as_deref(), Some("complete"));
+        assert_eq!(plan.steps[1].companion_emotion.as_deref(), Some("celebrate"));
+        assert!(plan.steps[1].goal_complete);
     }
 }

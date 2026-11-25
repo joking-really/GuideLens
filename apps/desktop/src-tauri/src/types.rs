@@ -47,6 +47,14 @@ pub struct Step {
     pub explanation: Option<String>,
     #[serde(default)]
     pub spoken_text: Option<String>,
+    #[serde(default)]
+    pub target_id: Option<u32>,
+    #[serde(default)]
+    pub action_kind: Option<String>,
+    #[serde(default)]
+    pub companion_emotion: Option<String>,
+    #[serde(default)]
+    pub goal_complete: bool,
 }
 
 impl Step {
@@ -116,6 +124,7 @@ impl RectPx {
 #[serde(rename_all = "snake_case")]
 pub enum StepSource {
     Uia,
+    Som,
     Vlm,
     #[default]
     None,
@@ -142,6 +151,14 @@ pub struct ResolvedStep {
     #[serde(default)]
     pub spoken_text: Option<String>,
     #[serde(default)]
+    pub target_id: Option<u32>,
+    #[serde(default)]
+    pub action_kind: Option<String>,
+    #[serde(default)]
+    pub companion_emotion: Option<String>,
+    #[serde(default)]
+    pub goal_complete: bool,
+    #[serde(default)]
     pub rect_px: Option<RectPx>,
     #[serde(default)]
     pub source: StepSource,
@@ -154,13 +171,14 @@ impl ResolvedStep {
         source: StepSource,
     ) -> Self {
         step.enforce_limits();
-        let (final_rect, final_source) = if step.confidence < 0.5 && source != StepSource::Uia {
-            (None, StepSource::None)
-        } else if rect_px.is_some() {
-            (rect_px, source)
-        } else {
-            (None, StepSource::None)
-        };
+        let (final_rect, final_source) =
+            if step.confidence < 0.5 && !matches!(source, StepSource::Uia | StepSource::Som) {
+                (None, StepSource::None)
+            } else if rect_px.is_some() {
+                (rect_px, source)
+            } else {
+                (None, StepSource::None)
+            };
 
         Self {
             step_number: step.step_number,
@@ -173,6 +191,10 @@ impl ResolvedStep {
             terminal_command: step.terminal_command,
             explanation: step.explanation,
             spoken_text: step.spoken_text,
+            target_id: step.target_id,
+            action_kind: step.action_kind,
+            companion_emotion: step.companion_emotion,
+            goal_complete: step.goal_complete,
             rect_px: final_rect,
             source: final_source,
         }
@@ -190,6 +212,10 @@ impl ResolvedStep {
             terminal_command: self.terminal_command.clone(),
             explanation: self.explanation.clone(),
             spoken_text: self.spoken_text.clone(),
+            target_id: self.target_id,
+            action_kind: self.action_kind.clone(),
+            companion_emotion: self.companion_emotion.clone(),
+            goal_complete: self.goal_complete,
         }
     }
 }
@@ -337,6 +363,22 @@ fn default_voice_conversation_mode() -> bool {
     true
 }
 
+fn default_companion_id() -> String {
+    "pixel_cat".to_string()
+}
+
+fn default_companion_wander() -> bool {
+    true
+}
+
+fn default_screenday_interval_sec() -> u32 {
+    15
+}
+
+fn default_screenday_skip_private() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "default_brain_mode")]
@@ -379,6 +421,28 @@ pub struct Settings {
     pub tts_auto_speak: bool,
     #[serde(default = "default_voice_conversation_mode")]
     pub voice_conversation_mode: bool,
+    #[serde(default = "default_companion_id")]
+    pub companion_id: String,
+    #[serde(default = "default_companion_wander")]
+    pub companion_wander: bool,
+    #[serde(default)]
+    pub screenday_enabled: bool,
+    #[serde(default = "default_screenday_interval_sec")]
+    pub screenday_interval_sec: u32,
+    #[serde(default)]
+    pub screenday_excluded_apps: Vec<String>,
+    #[serde(default = "default_screenday_skip_private")]
+    pub screenday_skip_private: bool,
+    #[serde(default)]
+    pub custom_api_base_url: Option<String>,
+    #[serde(default)]
+    pub custom_agent_cmd: Option<String>,
+    #[serde(default)]
+    pub summary_brain_mode: Option<String>,
+    #[serde(default)]
+    pub summary_byo_provider: Option<String>,
+    #[serde(default)]
+    pub summary_byo_model: Option<String>,
 }
 
 impl Default for Settings {
@@ -404,8 +468,28 @@ impl Default for Settings {
             tts_pitch_shift: default_tts_pitch_shift(),
             tts_auto_speak: default_tts_auto_speak(),
             voice_conversation_mode: default_voice_conversation_mode(),
+            companion_id: default_companion_id(),
+            companion_wander: default_companion_wander(),
+            screenday_enabled: false,
+            screenday_interval_sec: default_screenday_interval_sec(),
+            screenday_excluded_apps: Vec::new(),
+            screenday_skip_private: default_screenday_skip_private(),
+            custom_api_base_url: None,
+            custom_agent_cmd: None,
+            summary_brain_mode: None,
+            summary_byo_provider: None,
+            summary_byo_model: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LatencyBreakdown {
+    pub capture_ms: u64,
+    pub grounding_ms: u64,
+    pub memory_ms: u64,
+    pub llm_ms: u64,
+    pub total_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -416,6 +500,222 @@ pub struct AskResponse {
     pub resolved_steps: Vec<ResolvedStep>,
     pub capture_path: Option<String>,
     pub monitor: Option<MonitorInfo>,
+    #[serde(default)]
+    pub latency: Option<LatencyBreakdown>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroundedElementSource {
+    Uia,
+    Taskbar,
+    Ocr,
+    Vision,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroundedElement {
+    pub id: u32,
+    pub label: String,
+    pub control_type: String,
+    pub rect_px: RectPx,
+    pub norm_bbox: [f64; 4],
+    pub source: GroundedElementSource,
+    pub is_taskbar: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroundingSnapshot {
+    pub monitor: MonitorInfo,
+    pub active_app: String,
+    pub window_title: String,
+    pub hwnd: isize,
+    pub dhash64: String,
+    pub elements: Vec<GroundedElement>,
+    pub element_table_prompt: String,
+    pub capture_ms: u64,
+    pub grounding_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveSessionStatus {
+    #[default]
+    Idle,
+    Listening,
+    Observing,
+    Guiding,
+    WaitingSettle,
+    Paused,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiveSessionTurn {
+    pub turn_number: u32,
+    pub user_text: Option<String>,
+    pub instruction_line: String,
+    pub spoken_text: Option<String>,
+    pub action_kind: Option<String>,
+    pub companion_emotion: Option<String>,
+    pub target_name: Option<String>,
+    pub rect_px: Option<RectPx>,
+    pub active_app: String,
+    pub window_title: String,
+    pub latency: Option<LatencyBreakdown>,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiveSessionState {
+    pub session_id: Option<String>,
+    pub status: LiveSessionStatus,
+    pub goal: String,
+    pub companion_id: String,
+    pub current_step: Option<ResolvedStep>,
+    pub current_monitor: Option<MonitorInfo>,
+    pub turn_count: u32,
+    pub turns: Vec<LiveSessionTurn>,
+    pub graph_md_path: Option<String>,
+    pub started_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OverlayCompanionPayload {
+    pub mode: String,
+    pub companion_id: String,
+    pub emotion: String,
+    pub wander: bool,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub bubble_text: Option<String>,
+    pub screenday_recording: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KgNodeDto {
+    pub id: String,
+    pub node_type: String,
+    pub app_exe: String,
+    pub label: String,
+    pub metadata_json: Option<String>,
+    pub hit_count: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KgEdgeDto {
+    pub id: String,
+    pub from_node: String,
+    pub to_node: String,
+    pub relation: String,
+    pub intent: String,
+    pub control_name: Option<String>,
+    pub control_type: Option<String>,
+    pub shortcut: Option<String>,
+    pub norm_bbox: Option<[f64; 4]>,
+    pub success_count: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionGraphSummaryDto {
+    pub session_id: String,
+    pub day_key: String,
+    pub active_app: String,
+    pub goal: String,
+    pub graph_md_path: String,
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub completed: bool,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KnowledgeGraphDto {
+    pub nodes: Vec<KgNodeDto>,
+    pub edges: Vec<KgEdgeDto>,
+    pub sessions: Vec<SessionGraphSummaryDto>,
+    pub master_md_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenDayFrameDto {
+    pub id: String,
+    pub day_key: String,
+    pub captured_at: i64,
+    pub image_path: String,
+    pub active_app: String,
+    pub window_title: String,
+    pub project_name: Option<String>,
+    pub meeting_name: Option<String>,
+    pub ocr_excerpt: Option<String>,
+    pub dhash: String,
+    pub file_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenDayProjectGroup {
+    pub name: String,
+    pub frame_count: usize,
+    pub apps: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenDayMeetingGroup {
+    pub name: String,
+    pub started_at: i64,
+    pub ended_at: i64,
+    pub frame_count: usize,
+    pub screen_topics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenDaySummaryDto {
+    pub day_key: String,
+    pub folder_path: String,
+    pub frame_count: usize,
+    pub total_bytes: u64,
+    pub session_count: usize,
+    pub projects: Vec<String>,
+    pub meetings: Vec<String>,
+    pub summary_md: Option<String>,
+    pub graph_md_path: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenDayDetailDto {
+    pub summary: ScreenDaySummaryDto,
+    pub frames: Vec<ScreenDayFrameDto>,
+    pub project_groups: Vec<ScreenDayProjectGroup>,
+    pub meeting_groups: Vec<ScreenDayMeetingGroup>,
+    pub sessions: Vec<SessionGraphSummaryDto>,
+    pub day_graph_md: Option<String>,
+    pub day_diary_md: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenDayStatusDto {
+    pub enabled: bool,
+    pub interval_sec: u32,
+    pub today_key: String,
+    pub today_frames: usize,
+    pub today_bytes: u64,
+    pub last_captured_at: Option<i64>,
+    pub current_project: Option<String>,
+    pub current_meeting: Option<String>,
+    pub skipped_private: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConnectionTestResult {
+    pub ok: bool,
+    pub brain: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub latency_ms: u64,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -535,6 +835,10 @@ mod tests {
             terminal_command: None,
             explanation: None,
             spoken_text: Some(long_spoken),
+            target_id: Some(7),
+            action_kind: Some("click".to_string()),
+            companion_emotion: Some("pointing".to_string()),
+            goal_complete: false,
         };
         step.enforce_limits();
         let clamped = step.spoken_text.as_deref().expect("clamped spoken_text");
@@ -543,8 +847,16 @@ mod tests {
 
         let resolved = ResolvedStep::from_step(step.clone(), None, StepSource::None);
         assert_eq!(resolved.spoken_text, step.spoken_text);
+        assert_eq!(resolved.target_id, Some(7));
+        assert_eq!(resolved.action_kind.as_deref(), Some("click"));
+        assert_eq!(resolved.companion_emotion.as_deref(), Some("pointing"));
+        assert!(!resolved.goal_complete);
         let roundtrip = resolved.to_step();
         assert_eq!(roundtrip.spoken_text, step.spoken_text);
+        assert_eq!(roundtrip.target_id, Some(7));
+        assert_eq!(roundtrip.action_kind.as_deref(), Some("click"));
+        assert_eq!(roundtrip.companion_emotion.as_deref(), Some("pointing"));
+        assert!(!roundtrip.goal_complete);
 
         let mut blank_step = Step {
             spoken_text: Some("   \n\t  ".to_string()),
@@ -552,5 +864,97 @@ mod tests {
         };
         blank_step.enforce_limits();
         assert_eq!(blank_step.spoken_text, None);
+    }
+
+    #[test]
+    fn som_step_preserves_rect_with_low_confidence_and_roundtrips_v2_fields() {
+        let step = Step {
+            step_number: 2,
+            instruction_line: "Click the Export button.".to_string(),
+            target_name: Some("Export".to_string()),
+            control_type: Some("Button".to_string()),
+            bbox: None,
+            confidence: 0.25,
+            shortcut: None,
+            terminal_command: None,
+            explanation: None,
+            spoken_text: Some("Tap Export at the top right.".to_string()),
+            target_id: Some(14),
+            action_kind: Some("click".to_string()),
+            companion_emotion: Some("happy".to_string()),
+            goal_complete: true,
+        };
+        let rect = RectPx {
+            x: 1200,
+            y: 44,
+            w: 84,
+            h: 32,
+        };
+        let resolved = ResolvedStep::from_step(step, Some(rect), StepSource::Som);
+        assert_eq!(resolved.source, StepSource::Som);
+        assert_eq!(resolved.rect_px, Some(rect));
+        assert_eq!(resolved.target_id, Some(14));
+        assert_eq!(resolved.action_kind.as_deref(), Some("click"));
+        assert_eq!(resolved.companion_emotion.as_deref(), Some("happy"));
+        assert!(resolved.goal_complete);
+        assert_eq!(serde_json::to_string(&StepSource::Som).unwrap(), "\"som\"");
+    }
+
+    #[test]
+    fn legacy_settings_json_deserializes_with_v2_defaults() {
+        let legacy_json = r#"{
+            "brain_mode": "auto",
+            "onboarding_complete": true
+        }"#;
+        let settings: Settings =
+            serde_json::from_str(legacy_json).expect("legacy settings JSON must deserialize");
+        assert_eq!(settings.companion_id, "pixel_cat");
+        assert!(settings.companion_wander);
+        assert!(!settings.screenday_enabled);
+        assert_eq!(settings.screenday_interval_sec, 15);
+        assert!(settings.screenday_excluded_apps.is_empty());
+        assert!(settings.screenday_skip_private);
+        assert_eq!(settings.custom_api_base_url, None);
+        assert_eq!(settings.custom_agent_cmd, None);
+        assert_eq!(settings.summary_brain_mode, None);
+        assert_eq!(settings.summary_byo_provider, None);
+        assert_eq!(settings.summary_byo_model, None);
+
+        let defaults = Settings::default();
+        assert_eq!(defaults.companion_id, "pixel_cat");
+        assert!(defaults.companion_wander);
+        assert!(!defaults.screenday_enabled);
+        assert_eq!(defaults.screenday_interval_sec, 15);
+        assert!(defaults.screenday_excluded_apps.is_empty());
+        assert!(defaults.screenday_skip_private);
+        assert_eq!(defaults.custom_api_base_url, None);
+        assert_eq!(defaults.custom_agent_cmd, None);
+        assert_eq!(defaults.summary_brain_mode, None);
+        assert_eq!(defaults.summary_byo_provider, None);
+        assert_eq!(defaults.summary_byo_model, None);
+    }
+
+    #[test]
+    fn v2_dtos_serialize_snake_case_enums_and_roundtrip() {
+        assert_eq!(
+            serde_json::to_string(&GroundedElementSource::Taskbar).unwrap(),
+            "\"taskbar\""
+        );
+        assert_eq!(
+            serde_json::to_string(&LiveSessionStatus::WaitingSettle).unwrap(),
+            "\"waiting_settle\""
+        );
+
+        let conn = ConnectionTestResult {
+            ok: true,
+            brain: "byo_api".to_string(),
+            provider: Some("deepseek".to_string()),
+            model: Some("deepseek-chat".to_string()),
+            latency_ms: 142,
+            message: "Connected".to_string(),
+        };
+        let encoded = serde_json::to_string(&conn).unwrap();
+        let decoded: ConnectionTestResult = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, conn);
     }
 }

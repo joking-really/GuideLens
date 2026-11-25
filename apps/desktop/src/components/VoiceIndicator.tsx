@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
+import "../companions/companionAnimations.css";
 import { transcribeAudio } from "../lib/ipc";
 import type { SttEngine } from "../types";
 
 const ECHO_SETTLE_DELAY_MS = 250;
 const VAD_POLL_INTERVAL_MS = 60;
 const VAD_RMS_THRESHOLD = 0.02;
-const VAD_SILENCE_MS = 1300;
+const VAD_SILENCE_MS = 680;
 const VAD_MAX_UTTERANCE_MS = 15000;
 
 interface SpeechRecognitionResultItem {
@@ -122,6 +123,7 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
   onTranscript,
 }) => {
   const [listening, setListening] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const onTranscriptRef = useRef(onTranscript);
@@ -131,6 +133,7 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
   pausedForTtsRef.current = pausedForTts;
   const wasPausedForTtsRef = useRef(false);
   const unmountedRef = useRef(false);
+  const lastLevelRef = useRef(0);
 
   // Declare unmount tracker before listening effect so cleanup sees unmountedRef = true
   useEffect(() => {
@@ -144,12 +147,14 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
     if (!voiceEnabled) {
       wasPausedForTtsRef.current = false;
       setListening(false);
+      setMicLevel(0);
       return;
     }
 
     if (pausedForTts) {
       wasPausedForTtsRef.current = true;
       setListening(false);
+      setMicLevel(0);
       return;
     }
 
@@ -240,7 +245,7 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
         };
       }
 
-      // MediaRecorder path for cloud (Groq Whisper with RMS VAD) or whisper_cpp
+      // MediaRecorder path for cloud (Groq Whisper with 680ms RMS VAD) or whisper_cpp
       let recorderDisposed = false;
       let discardChunk = false;
       let stream: MediaStream | null = null;
@@ -296,7 +301,7 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
             }
 
             if (sttEngine === "cloud" && analyser) {
-              // Hands-free RMS VAD utterance loop for Groq Whisper
+              // Hands-free RMS VAD utterance loop for Groq Whisper (680ms silence cutoff)
               const binCount = analyser.fftSize || 1024;
               const floatBuf = new Float32Array(new ArrayBuffer(binCount * 4));
               const byteBuf = new Uint8Array(new ArrayBuffer(binCount));
@@ -369,6 +374,11 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
                   return;
                 }
                 const rms = computeAnalyserRms(analyser, floatBuf, byteBuf);
+                const normalizedLevel = Math.min(1, rms / 0.14);
+                if (Math.abs(normalizedLevel - lastLevelRef.current) > 0.08) {
+                  lastLevelRef.current = normalizedLevel;
+                  setMicLevel(normalizedLevel);
+                }
                 const now = Date.now();
                 const isSpeech = rms >= VAD_RMS_THRESHOLD;
 
@@ -481,6 +491,7 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
           void Promise.resolve(audioCtx.close()).catch(() => {});
         }
         setListening(false);
+        setMicLevel(0);
       };
     };
 
@@ -516,7 +527,10 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
     ? `${engineBadge}: Muted (click to enable)`
     : pausedForTts
       ? `${engineBadge}: Paused while GuideLens speaks (click to mute)`
-      : `${engineBadge}: Active (click to mute)`;
+      : `${engineBadge}: Active · 680ms VAD (click to mute)`;
+
+  const activeWaveform = voiceEnabled && listening && !pausedForTts;
+  const waveScale = Math.max(0.4, Math.min(1, micLevel > 0 ? micLevel : 0.75));
 
   return (
     <button
@@ -528,24 +542,26 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
       data-testid="voice-mute-toggle"
       data-paused-for-tts={pausedForTts ? "true" : "false"}
       data-speaking={speaking ? "true" : "false"}
-      className={`relative flex items-center justify-center w-7 h-7 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8] ${
+      className={`relative shrink-0 flex items-center justify-center gap-1 h-8 rounded-full transition-all focus:outline-none focus:ring-1 focus:ring-[#38BDF8] ${
+        activeWaveform ? "px-2" : "w-8"
+      } ${
         voiceEnabled && pausedForTts
-          ? "text-amber-300 bg-amber-400/15 hover:bg-amber-400/25"
+          ? "text-amber-300 bg-amber-400/15 border border-amber-400/35 hover:bg-amber-400/25"
           : voiceEnabled
-            ? "text-[#38BDF8] bg-[#38BDF8]/15 hover:bg-[#38BDF8]/25"
-            : "text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/5"
+            ? "text-[#38BDF8] bg-[#38BDF8]/15 border border-[#38BDF8]/40 hover:bg-[#38BDF8]/25"
+            : "text-[#A1A1AA] bg-white/[0.04] border border-white/10 hover:text-[#F4F4F5] hover:bg-white/10"
       }`}
     >
-      {voiceEnabled && listening && !pausedForTts && (
+      {activeWaveform && (
         <span
           data-testid="voice-pulse-ring"
-          className="absolute inset-0 rounded-md ring-1 ring-[#38BDF8]/60 animate-ping pointer-events-none"
+          className="absolute inset-0 rounded-full ring-1 ring-[#38BDF8]/60 animate-ping pointer-events-none"
         />
       )}
       {voiceEnabled ? (
         <svg
-          width="15"
-          height="15"
+          width="14"
+          height="14"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -560,8 +576,8 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
         </svg>
       ) : (
         <svg
-          width="15"
-          height="15"
+          width="14"
+          height="14"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -577,6 +593,35 @@ export const VoiceIndicator: React.FC<VoiceIndicatorProps> = ({
           <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
           <line x1="12" x2="12" y1="19" y2="22" />
         </svg>
+      )}
+      {activeWaveform && (
+        <span
+          data-testid="voice-waveform"
+          aria-hidden="true"
+          className="flex items-end gap-[2px] h-3"
+        >
+          <span
+            style={{
+              height: `${Math.round(8 * waveScale + 3)}px`,
+              animationDelay: "0ms",
+            }}
+            className="gl-mic-bar w-[2px] rounded-full bg-current"
+          />
+          <span
+            style={{
+              height: `${Math.round(11 * waveScale + 3)}px`,
+              animationDelay: "140ms",
+            }}
+            className="gl-mic-bar w-[2px] rounded-full bg-current"
+          />
+          <span
+            style={{
+              height: `${Math.round(7 * waveScale + 3)}px`,
+              animationDelay: "280ms",
+            }}
+            className="gl-mic-bar w-[2px] rounded-full bg-current"
+          />
+        </span>
       )}
     </button>
   );

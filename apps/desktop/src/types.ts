@@ -25,6 +25,14 @@ export interface Step {
   explanation?: string | null;
   /** Optional conversational speech cue for offline TTS (<= 140 chars) */
   spoken_text?: string | null;
+  /** Set-of-Mark grounded element ID */
+  target_id?: number | null;
+  /** Action hint (e.g. "click", "type", "shortcut", "scroll") */
+  action_kind?: string | null;
+  /** Companion emotion cue (e.g. "pointing", "happy", "thinking") */
+  companion_emotion?: string | null;
+  /** True when the current live goal is complete */
+  goal_complete?: boolean;
 }
 
 export interface StepPlan {
@@ -40,7 +48,7 @@ export interface RectPx {
   h: number;
 }
 
-export type StepSource = "uia" | "vlm" | "none";
+export type StepSource = "uia" | "som" | "vlm" | "none";
 
 export interface ResolvedStep extends Step {
   rect_px: RectPx | null;
@@ -61,15 +69,43 @@ export type ApiProvider =
   | "openai"
   | "anthropic"
   | "groq"
-  | "openrouter";
+  | "openrouter"
+  | "deepseek"
+  | "custom_openai";
 
-export type AgentId = "claude" | "codex" | "gemini" | "agy" | "hermes";
+export type AgentId =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "agy"
+  | "hermes"
+  | "copilot"
+  | "opencode"
+  | "custom";
+
+export type KnownCompanionId =
+  | "pixel_cat"
+  | "tech_nerd"
+  | "anime_guide"
+  | "minimal_orb"
+  | "none";
+
+export type CompanionId = KnownCompanionId | (string & {});
 
 export type SttEngine = "web_speech" | "whisper_cpp" | "cloud";
 
 export type TinyVocaVoice = "M2" | "F2";
 
-export type SettingsTab = "brains" | "voice" | "account" | "privacy" | "history";
+export type SettingsTab =
+  | "overview"
+  | "brains"
+  | "voice"
+  | "diary"
+  | "graph"
+  | "companions"
+  | "account"
+  | "privacy"
+  | "history";
 
 export interface MonitorInfo {
   x: number;
@@ -79,6 +115,20 @@ export interface MonitorInfo {
   scale: number;
 }
 
+export interface LatencyBreakdown {
+  capture_ms: number;
+  grounding_ms: number;
+  memory_ms: number;
+  llm_ms: number;
+  total_ms: number;
+}
+
+export interface LatencyStats {
+  recent: LatencyBreakdown[];
+  average: LatencyBreakdown | null;
+  count: number;
+}
+
 export interface AskResponse {
   session_id: string;
   brain: BrainKind;
@@ -86,6 +136,194 @@ export interface AskResponse {
   resolved_steps: ResolvedStep[];
   capture_path: string | null;
   monitor: MonitorInfo | null;
+  latency?: LatencyBreakdown | null;
+}
+
+export type GroundedElementSource = "uia" | "taskbar" | "ocr" | "vision";
+
+export interface GroundedElement {
+  id: number;
+  label: string;
+  control_type: string;
+  rect_px: RectPx;
+  norm_bbox: BBox;
+  source: GroundedElementSource;
+  is_taskbar: boolean;
+}
+
+export interface GroundingSnapshot {
+  monitor: MonitorInfo;
+  active_app: string;
+  window_title: string;
+  hwnd: number;
+  dhash64: string;
+  elements: GroundedElement[];
+  element_table_prompt: string;
+  capture_ms: number;
+  grounding_ms: number;
+}
+
+export type LiveSessionStatus =
+  | "idle"
+  | "listening"
+  | "observing"
+  | "guiding"
+  | "waiting_settle"
+  | "paused"
+  | "completed";
+
+export interface LiveSessionTurn {
+  turn_number: number;
+  user_text: string | null;
+  instruction_line: string;
+  spoken_text: string | null;
+  action_kind: string | null;
+  companion_emotion: string | null;
+  target_name: string | null;
+  rect_px: RectPx | null;
+  active_app: string;
+  window_title: string;
+  latency: LatencyBreakdown | null;
+  timestamp: number;
+}
+
+export interface LiveSessionState {
+  session_id: string | null;
+  status: LiveSessionStatus;
+  goal: string;
+  companion_id: CompanionId;
+  current_step: ResolvedStep | null;
+  current_monitor: MonitorInfo | null;
+  turn_count: number;
+  turns: LiveSessionTurn[];
+  graph_md_path: string | null;
+  started_at: number | null;
+}
+
+export interface OverlayCompanionPayload {
+  mode: string;
+  companion_id: CompanionId;
+  emotion: string;
+  wander: boolean;
+  x: number | null;
+  y: number | null;
+  bubble_text: string | null;
+  screenday_recording: boolean;
+}
+
+export interface KgNodeDto {
+  id: string;
+  node_type: string;
+  app_exe: string;
+  label: string;
+  metadata_json: string | null;
+  hit_count: number;
+  updated_at: number;
+}
+
+export interface KgEdgeDto {
+  id: string;
+  from_node: string;
+  to_node: string;
+  relation: string;
+  intent: string;
+  control_name: string | null;
+  control_type: string | null;
+  shortcut: string | null;
+  norm_bbox: BBox | null;
+  success_count: number;
+  updated_at: number;
+}
+
+export interface SessionGraphSummaryDto {
+  session_id: string;
+  day_key: string;
+  active_app: string;
+  goal: string;
+  graph_md_path: string;
+  node_count: number;
+  edge_count: number;
+  completed: boolean;
+  created_at: number;
+}
+
+export interface KnowledgeGraphDto {
+  nodes: KgNodeDto[];
+  edges: KgEdgeDto[];
+  sessions: SessionGraphSummaryDto[];
+  master_md_path: string | null;
+}
+
+export interface ScreenDayFrameDto {
+  id: string;
+  day_key: string;
+  captured_at: number;
+  image_path: string;
+  active_app: string;
+  window_title: string;
+  project_name: string | null;
+  meeting_name: string | null;
+  ocr_excerpt: string | null;
+  dhash: string;
+  file_bytes: number;
+}
+
+export interface ScreenDayProjectGroup {
+  name: string;
+  frame_count: number;
+  apps: string[];
+}
+
+export interface ScreenDayMeetingGroup {
+  name: string;
+  started_at: number;
+  ended_at: number;
+  frame_count: number;
+  screen_topics: string[];
+}
+
+export interface ScreenDaySummaryDto {
+  day_key: string;
+  folder_path: string;
+  frame_count: number;
+  total_bytes: number;
+  session_count: number;
+  projects: string[];
+  meetings: string[];
+  summary_md: string | null;
+  graph_md_path: string | null;
+  updated_at: number;
+}
+
+export interface ScreenDayDetailDto {
+  summary: ScreenDaySummaryDto;
+  frames: ScreenDayFrameDto[];
+  project_groups: ScreenDayProjectGroup[];
+  meeting_groups: ScreenDayMeetingGroup[];
+  sessions: SessionGraphSummaryDto[];
+  day_graph_md: string | null;
+  day_diary_md: string | null;
+}
+
+export interface ScreenDayStatusDto {
+  enabled: boolean;
+  interval_sec: number;
+  today_key: string;
+  today_frames: number;
+  today_bytes: number;
+  last_captured_at: number | null;
+  current_project: string | null;
+  current_meeting: string | null;
+  skipped_private: boolean;
+}
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  brain: string;
+  provider: string | null;
+  model: string | null;
+  latency_ms: number;
+  message: string;
 }
 
 export type AskErrorCode =
@@ -159,6 +397,17 @@ export interface Settings {
   onboarding_complete: boolean;
   bar_position: { x: number; y: number } | null;
   cloud_url?: string;
+  companion_id: CompanionId;
+  companion_wander: boolean;
+  screenday_enabled: boolean;
+  screenday_interval_sec: number;
+  screenday_excluded_apps: string[];
+  screenday_skip_private: boolean;
+  custom_api_base_url: string | null;
+  custom_agent_cmd: string | null;
+  summary_brain_mode: BrainMode | null;
+  summary_byo_provider: ApiProvider | null;
+  summary_byo_model: string | null;
 }
 
 export interface OllamaStatus {
@@ -230,6 +479,17 @@ export const DEFAULT_SETTINGS: Settings = {
   capture_retention_days: 7,
   onboarding_complete: false,
   bar_position: null,
+  companion_id: "pixel_cat",
+  companion_wander: true,
+  screenday_enabled: false,
+  screenday_interval_sec: 15,
+  screenday_excluded_apps: [],
+  screenday_skip_private: true,
+  custom_api_base_url: null,
+  custom_agent_cmd: null,
+  summary_brain_mode: null,
+  summary_byo_provider: null,
+  summary_byo_model: null,
 };
 
 export const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
@@ -238,6 +498,8 @@ export const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
   anthropic: "Anthropic",
   groq: "Groq",
   openrouter: "OpenRouter",
+  deepseek: "DeepSeek",
+  custom_openai: "Custom OpenAI",
 };
 
 export const AGENT_LABELS: Record<AgentId, string> = {
@@ -246,6 +508,17 @@ export const AGENT_LABELS: Record<AgentId, string> = {
   gemini: "Gemini CLI",
   agy: "Antigravity",
   hermes: "Hermes",
+  copilot: "GitHub Copilot",
+  opencode: "OpenCode",
+  custom: "Custom CLI",
+};
+
+export const COMPANION_LABELS: Record<KnownCompanionId, string> = {
+  pixel_cat: "Mochi — Pixel Cat",
+  tech_nerd: "Byte — Tech Nerd",
+  anime_guide: "Sora — Anime Spirit",
+  minimal_orb: "Flow — Minimal Orb",
+  none: "Hidden",
 };
 
 export const BRAIN_LABELS: Record<BrainKind, string> = {

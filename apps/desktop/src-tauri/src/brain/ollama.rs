@@ -1,5 +1,6 @@
 //! Local Ollama VLM provider (`localhost:11434/api/chat`), status detection, and model pull with progress events.
 
+use crate::brain::http_client::shared_http_client;
 use crate::brain::json_repair::parse_and_repair_step_plan;
 use crate::brain::provider::{BrainError, BrainErrorCode, BrainProvider, BrainRequest};
 use crate::types::{BrainKind, OllamaPullProgressPayload, StepPlan};
@@ -61,51 +62,24 @@ impl OllamaProvider {
             model_str.trim().to_string()
         };
 
-        let client = Client::builder()
-            .timeout(Duration::from_secs(45))
-            .build()
-            .unwrap_or_else(|_| Client::new());
-
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             model: effective_model,
-            client,
+            client: shared_http_client().clone(),
         }
     }
-}
 
-#[async_trait]
-impl BrainProvider for OllamaProvider {
-    fn kind(&self) -> BrainKind {
-        BrainKind::LocalVlm
-    }
-
-    async fn generate_plan(&self, req: &BrainRequest) -> Result<StepPlan, BrainError> {
+    async fn send_chat(
+        &self,
+        payload: &Value,
+        timeout: Duration,
+    ) -> Result<String, BrainError> {
         let url = format!("{}/api/chat", self.base_url);
-        let payload = json!({
-            "model": self.model,
-            "stream": false,
-            "format": "json",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": req.system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": req.user_prompt,
-                    "images": [req.image_base64]
-                }
-            ],
-            "options": {
-                "temperature": 0.1
-            }
-        });
-
         let resp = self
             .client
             .post(&url)
-            .json(&payload)
+            .timeout(timeout)
+            .json(payload)
             .send()
             .await
             .map_err(|e| {
@@ -172,20 +146,85 @@ impl BrainProvider for OllamaProvider {
             ));
         }
 
-        let content = json_body
+        json_body
             .get("message")
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
             .or_else(|| json_body.get("response").and_then(|r| r.as_str()))
+            .map(|s| s.to_string())
             .ok_or_else(|| {
                 BrainError::new(
                     BrainErrorCode::InvalidResponse,
                     BrainKind::LocalVlm,
                     "Ollama response missing 'message.content' field",
                 )
-            })?;
+            })
+    }
 
-        parse_and_repair_step_plan(content).map_err(|e| {
+    /// Plain-text generation via Ollama (used for Nightly Screen Day summaries).
+    pub async fn generate_text(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+    ) -> Result<String, BrainError> {
+        let payload = json!({
+            "model": self.model,
+            "stream": false,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ],
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 900
+            }
+        });
+        self.send_chat(&payload, Duration::from_secs(45)).await
+    }
+}
+
+#[async_trait]
+impl BrainProvider for OllamaProvider {
+    fn kind(&self) -> BrainKind {
+        BrainKind::LocalVlm
+    }
+
+    async fn generate_plan(&self, req: &BrainRequest) -> Result<StepPlan, BrainError> {
+        let user_msg = if req.image_base64.trim().is_empty() {
+            json!({
+                "role": "user",
+                "content": req.user_prompt
+            })
+        } else {
+            json!({
+                "role": "user",
+                "content": req.user_prompt,
+                "images": [req.image_base64]
+            })
+        };
+
+        let mut options = json!({ "temperature": 0.1 });
+        if let Some(max_tok) = req.max_tokens {
+            options["num_predict"] = json!(max_tok);
+        }
+
+        let payload = json!({
+            "model": self.model,
+            "stream": false,
+            "format": "json",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": req.system_prompt
+                },
+                user_msg
+            ],
+            "options": options
+        });
+
+        let content = self.send_chat(&payload, Duration::from_secs(45)).await?;
+
+        parse_and_repair_step_plan(&content).map_err(|e| {
             BrainError::new(
                 BrainErrorCode::InvalidResponse,
                 BrainKind::LocalVlm,
@@ -208,13 +247,14 @@ struct OllamaTagModel {
 
 /// Checks if Ollama is running on `base_url` and lists installed model tags.
 pub async fn check_ollama_status(base_url: &str) -> OllamaStatus {
-    let client = Client::builder()
-        .timeout(Duration::from_millis(2500))
-        .build()
-        .unwrap_or_else(|_| Client::new());
-
+    let client = shared_http_client();
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
-    match client.get(&url).send().await {
+    match client
+        .get(&url)
+        .timeout(Duration::from_millis(2500))
+        .send()
+        .await
+    {
         Ok(resp) if resp.status().is_success() => {
             let models = resp
                 .json::<OllamaTagsResponse>()
@@ -261,14 +301,11 @@ where
         return Err("Model name must not be empty".to_string());
     }
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(60 * 30))
-        .build()
-        .map_err(|e| format!("Failed to initialize HTTP client: {}", e))?;
-
+    let client = shared_http_client();
     let url = format!("{}/api/pull", base_url.trim_end_matches('/'));
     let resp = client
         .post(&url)
+        .timeout(Duration::from_secs(60 * 30))
         .json(&json!({
             "name": trimmed_model,
             "stream": true
@@ -368,6 +405,7 @@ mod tests {
             system_prompt: "Return StepPlan JSON".to_string(),
             user_prompt: "How do I select the brush tool?".to_string(),
             conversation_history: vec![],
+            ..Default::default()
         }
     }
 

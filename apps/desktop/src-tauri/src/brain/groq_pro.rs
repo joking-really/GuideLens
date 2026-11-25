@@ -1,5 +1,6 @@
 //! Managed Cloud Pro provider (`POST /api/v1/guide`), Supabase GoTrue REST auth, and Stripe checkout.
 
+use crate::brain::http_client::shared_http_client;
 use crate::brain::json_repair::parse_and_repair_step_plan;
 use crate::brain::provider::{BrainError, BrainErrorCode, BrainProvider, BrainRequest};
 use crate::brain::secrets::SecretStore;
@@ -119,13 +120,6 @@ fn default_limit() -> u64 {
     1500
 }
 
-fn build_http_client(timeout_secs: u64) -> Client {
-    Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
-        .build()
-        .unwrap_or_else(|_| Client::new())
-}
-
 /// Signs in via Supabase GoTrue password grant and stores the refresh + access tokens in Windows Credential Manager.
 pub async fn auth_login(
     email: &str,
@@ -144,7 +138,7 @@ pub async fn auth_login(
         );
     }
 
-    let client = build_http_client(15);
+    let client = shared_http_client();
     let url = format!(
         "{}/auth/v1/token?grant_type=password",
         endpoints.supabase_url
@@ -152,6 +146,7 @@ pub async fn auth_login(
 
     let resp = client
         .post(&url)
+        .timeout(Duration::from_secs(15))
         .header("apikey", &endpoints.supabase_anon_key)
         .json(&json!({
             "email": trimmed_email,
@@ -191,7 +186,7 @@ pub async fn auth_login(
         Some(&resolved_email),
     )?;
 
-    match fetch_me(&client, &endpoints.cloud_url, &token_res.access_token).await {
+    match fetch_me(client, &endpoints.cloud_url, &token_res.access_token).await {
         Ok(me) => Ok(AuthStatus {
             logged_in: true,
             email: me.email.or(Some(resolved_email)),
@@ -223,13 +218,14 @@ pub async fn refresh_session(
         .get_refresh_token()?
         .ok_or_else(|| "No refresh token stored".to_string())?;
 
-    let client = build_http_client(15);
+    let client = shared_http_client();
     let url = format!(
         "{}/auth/v1/token?grant_type=refresh_token",
         endpoints.supabase_url
     );
     let resp = client
         .post(&url)
+        .timeout(Duration::from_secs(15))
         .header("apikey", &endpoints.supabase_anon_key)
         .json(&json!({ "refresh_token": refresh_token }))
         .send()
@@ -261,10 +257,11 @@ pub async fn refresh_session(
 pub async fn auth_logout(secrets: &SecretStore, endpoints: &CloudEndpoints) -> Result<(), String> {
     if let Ok(Some(access)) = secrets.get_access_token() {
         if !endpoints.supabase_url.is_empty() && !endpoints.supabase_anon_key.is_empty() {
-            let client = build_http_client(5);
+            let client = shared_http_client();
             let url = format!("{}/auth/v1/logout", endpoints.supabase_url);
             let _ = client
                 .post(&url)
+                .timeout(Duration::from_secs(5))
                 .header("apikey", &endpoints.supabase_anon_key)
                 .bearer_auth(access)
                 .send()
@@ -286,7 +283,7 @@ pub async fn auth_status(
         return Ok(AuthStatus::logged_out());
     }
 
-    let client = build_http_client(8);
+    let client = shared_http_client();
     let mut token = match stored_access {
         Some(t) => t,
         None => match refresh_session(secrets, endpoints).await {
@@ -298,7 +295,7 @@ pub async fn auth_status(
         },
     };
 
-    match fetch_me(&client, &endpoints.cloud_url, &token).await {
+    match fetch_me(client, &endpoints.cloud_url, &token).await {
         Ok(me) => Ok(AuthStatus {
             logged_in: true,
             email: me.email.or(stored_email),
@@ -310,7 +307,7 @@ pub async fn auth_status(
         Err(MeError::Unauthorized) => {
             if let Ok(fresh) = refresh_session(secrets, endpoints).await {
                 token = fresh;
-                if let Ok(me) = fetch_me(&client, &endpoints.cloud_url, &token).await {
+                if let Ok(me) = fetch_me(client, &endpoints.cloud_url, &token).await {
                     return Ok(AuthStatus {
                         logged_in: true,
                         email: me.email.or(stored_email),
@@ -352,10 +349,11 @@ pub async fn billing_checkout(
         _ => "monthly",
     };
 
-    let client = build_http_client(15);
+    let client = shared_http_client();
     let url = format!("{}/api/v1/billing/checkout", endpoints.cloud_url);
     let resp = client
         .post(&url)
+        .timeout(Duration::from_secs(15))
         .bearer_auth(&token)
         .json(&json!({ "plan": normalized_plan }))
         .send()
@@ -397,6 +395,7 @@ async fn fetch_me(
     let url = format!("{}/api/v1/me", cloud_url.trim_end_matches('/'));
     let resp = client
         .get(&url)
+        .timeout(Duration::from_secs(8))
         .bearer_auth(access_token)
         .send()
         .await
@@ -428,7 +427,7 @@ impl GroqProProvider {
             endpoints,
             secrets,
             access_token_override: None,
-            client: build_http_client(18),
+            client: shared_http_client().clone(),
         }
     }
 
@@ -484,6 +483,7 @@ impl GroqProProvider {
 
         self.client
             .post(&url)
+            .timeout(Duration::from_secs(18))
             .bearer_auth(token)
             .json(&body)
             .send()
@@ -603,6 +603,7 @@ mod tests {
             system_prompt: "StepPlan".to_string(),
             user_prompt: "Remove background".to_string(),
             conversation_history: vec![],
+            ..Default::default()
         }
     }
 

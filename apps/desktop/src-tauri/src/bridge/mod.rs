@@ -270,6 +270,10 @@ async fn highlight_handler(
         terminal_command: None,
         explanation: None,
         spoken_text: None,
+        target_id: None,
+        action_kind: Some("click".to_string()),
+        companion_emotion: Some("pointing".to_string()),
+        goal_complete: false,
         rect_px,
         source: StepSource::Vlm,
     };

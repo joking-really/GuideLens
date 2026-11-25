@@ -86,6 +86,21 @@ pub fn release_overlay_hooks() {
     stop_input_hooks();
 }
 
+/// Releases global hooks only when both static overlay guidance and any Live Session are inactive.
+pub fn release_overlay_hooks_if_idle(app: &AppHandle) {
+    let overlay_active = app
+        .try_state::<OverlayState>()
+        .map(|s| s.is_active())
+        .unwrap_or(false);
+    let session_active = app
+        .try_state::<crate::session::LiveSessionManager>()
+        .map(|s| s.is_active())
+        .unwrap_or(false);
+    if !overlay_active && !session_active {
+        stop_input_hooks();
+    }
+}
+
 #[cfg(windows)]
 fn start_windows_ll_hooks() {
     if HOOKS_ACTIVE.swap(true, Ordering::SeqCst) {
@@ -117,7 +132,17 @@ fn start_windows_ll_hooks() {
                     let click_y = info.pt.y;
 
                     if let Some(app) = APP_HANDLE.get() {
-                        if let Some(state) = app.try_state::<OverlayState>() {
+                        let session_guiding = app
+                            .try_state::<crate::session::LiveSessionManager>()
+                            .map(|s| s.is_guiding())
+                            .unwrap_or(false);
+
+                        if session_guiding {
+                            let app_clone = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                crate::session::notify_user_click(&app_clone, click_x, click_y);
+                            });
+                        } else if let Some(state) = app.try_state::<OverlayState>() {
                             if should_auto_advance_on_click(state.current_rect(), click_x, click_y)
                             {
                                 let app_clone = app.clone();

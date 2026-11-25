@@ -2,13 +2,19 @@ pub mod brain;
 pub mod bridge;
 pub mod capture;
 pub mod db;
+pub mod grounding;
 pub mod input;
 pub mod locator;
+pub mod memory;
 pub mod overlay;
+pub mod screenday;
+pub mod session;
 pub mod types;
 
 use crate::db::DbState;
 use crate::overlay::OverlayState;
+use crate::screenday::ScreenDayState;
+use crate::session::LiveSessionManager;
 use crate::types::{HistoryDetail, HistorySession, ResolvedStep, Settings};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -39,7 +45,17 @@ fn get_settings(db: State<'_, DbState>) -> Result<Settings, String> {
 
 #[tauri::command]
 fn set_settings(app: AppHandle, db: State<'_, DbState>, s: Settings) -> Result<(), String> {
+    let prev_custom_agent = db.get_settings().ok().and_then(|p| p.custom_agent_cmd);
     db.set_settings(&s)?;
+    if let Some(sd) = app.try_state::<ScreenDayState>() {
+        sd.set_enabled(s.screenday_enabled);
+    }
+    if prev_custom_agent != s.custom_agent_cmd {
+        if let Some(brain_state) = app.try_state::<brain::BrainState>() {
+            brain_state.invalidate_agent_cache();
+        }
+    }
+    overlay::sync_companion_with_settings(&app, &s);
     let _ = tauri::Emitter::emit(&app, "settings-changed", &s);
     Ok(())
 }
@@ -75,10 +91,42 @@ fn open_settings_tab(app: &AppHandle, tab: &str, title: &str) {
     }
 }
 
+fn toggle_screenday_from_tray(app: &AppHandle) {
+    if let (Some(db), Some(sd)) = (app.try_state::<DbState>(), app.try_state::<ScreenDayState>()) {
+        let next_enabled = !sd.is_enabled();
+        sd.set_enabled(next_enabled);
+        let mut settings = db.get_settings().unwrap_or_default();
+        settings.screenday_enabled = next_enabled;
+        if let Err(e) = db.set_settings(&settings) {
+            log::warn!("Failed to persist Screen Day tray toggle: {}", e);
+        }
+        overlay::sync_companion_with_settings(app, &settings);
+        let _ = tauri::Emitter::emit(app, "settings-changed", &settings);
+    }
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show_hide = MenuItem::with_id(app, "toggle_bar", "Show / Hide Bar", true, None::<&str>)?;
-    let open_settings =
-        MenuItem::with_id(app, "open_settings", "Settings & History", true, None::<&str>)?;
+    let toggle_live = MenuItem::with_id(
+        app,
+        "toggle_live_session",
+        "Start / Stop Live Session",
+        true,
+        None::<&str>,
+    )?;
+    let toggle_screenday = MenuItem::with_id(
+        app,
+        "toggle_screenday",
+        "Toggle Screen Day",
+        true,
+        None::<&str>,
+    )?;
+    let open_control_center = MenuItem::with_id(
+        app,
+        "open_control_center",
+        "Open Control Center",
+        true,
+        None::<&str>,
+    )?;
     let open_voice_studio =
         MenuItem::with_id(app, "open_voice_studio", "Voice Studio", true, None::<&str>)?;
     let clear_item = MenuItem::with_id(app, "clear_overlay", "Clear Overlay", true, None::<&str>)?;
@@ -86,8 +134,9 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
-            &show_hide,
-            &open_settings,
+            &toggle_live,
+            &toggle_screenday,
+            &open_control_center,
             &open_voice_studio,
             &clear_item,
             &quit_item,
@@ -108,8 +157,16 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "toggle_bar" => input::toggle_bar_window(app),
-            "open_settings" => open_settings_tab(app, "brains", "GuideLens Settings & History"),
+            "toggle_live_session" => {
+                let app_clone = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    session::toggle_live_session_from_tray(app_clone).await;
+                });
+            }
+            "toggle_screenday" => toggle_screenday_from_tray(app),
+            "open_control_center" => {
+                open_settings_tab(app, "overview", "GuideLens Control Center");
+            }
             "open_voice_studio" => open_settings_tab(app, "voice", "GuideLens Voice Studio"),
             "clear_overlay" => {
                 let _ = overlay::clear_overlay_state(app);
@@ -153,11 +210,18 @@ pub fn run() {
         .manage(db_state)
         .manage(OverlayState::new())
         .manage(brain::BrainState::new())
+        .manage(LiveSessionManager::new())
+        .manage(ScreenDayState::new())
         .setup(|app| {
             let handle = app.handle().clone();
 
             // Configure overlay window to span the virtual desktop and be 100% click-through
             overlay::configure_overlay_window(&handle);
+            if let Some(db) = handle.try_state::<DbState>() {
+                if let Ok(settings) = db.get_settings() {
+                    overlay::sync_companion_with_settings(&handle, &settings);
+                }
+            }
 
             // Restore bar position if valid within virtual desktop, else center near top of primary monitor
             if let Some(bar) = handle.get_webview_window("bar") {
@@ -197,7 +261,10 @@ pub fn run() {
             // Start localhost HTTP bridge on 127.0.0.1:47615 for guidelens-mcp
             bridge::start_bridge_server(handle.clone());
 
-            // Build system tray icon with Quit
+            // Start all-day privacy-shielded Screen Day worker
+            screenday::start_screenday_worker(handle.clone());
+
+            // Build system tray icon
             if let Err(e) = setup_tray(&handle) {
                 log::warn!("Tray icon setup warning: {}", e);
             }
@@ -225,6 +292,24 @@ pub fn run() {
             brain::commands::auth_status,
             brain::commands::billing_checkout,
             brain::commands::transcribe,
+            brain::commands::test_brain_connection,
+            brain::commands::get_latency_stats,
+            session::start_live_session,
+            session::send_live_message,
+            session::end_live_session,
+            session::get_live_session,
+            session::pause_live_session,
+            overlay::preview_companion,
+            memory::get_knowledge_graph,
+            memory::list_session_graphs,
+            memory::read_graph_markdown,
+            memory::delete_memory_node,
+            screenday::screenday_set_enabled,
+            screenday::screenday_status,
+            screenday::screenday_capture_now,
+            screenday::screenday_list_days,
+            screenday::screenday_get_day,
+            screenday::screenday_generate_summary,
         ])
         .on_window_event(|window, event| {
             if window.label() == "bar" {

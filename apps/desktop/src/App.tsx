@@ -11,6 +11,10 @@ import {
 import { DEFAULT_SETTINGS, type Settings, type SettingsTab } from "./types";
 
 const VALID_SETTINGS_TABS: readonly SettingsTab[] = [
+  "overview",
+  "diary",
+  "graph",
+  "companions",
   "brains",
   "voice",
   "account",
@@ -18,10 +22,13 @@ const VALID_SETTINGS_TABS: readonly SettingsTab[] = [
   "history",
 ];
 
-function parseSettingsTab(raw: string | null): SettingsTab {
+function parseSettingsTab(
+  raw: string | null,
+  fallback: SettingsTab = "brains",
+): SettingsTab {
   return raw && (VALID_SETTINGS_TABS as readonly string[]).includes(raw)
     ? (raw as SettingsTab)
-    : "brains";
+    : fallback;
 }
 
 function resolveRoute(): {
@@ -37,7 +44,9 @@ function resolveRoute(): {
   const rawPath = queryRoute || hashPath || window.location.pathname || "/";
   const normalized = rawPath.toLowerCase().replace(/\/+$/, "") || "/";
 
-  const tab = parseSettingsTab(params.get("tab"));
+  const defaultTab: SettingsTab =
+    normalized === "/hub" ? "overview" : "brains";
+  const tab = parseSettingsTab(params.get("tab"), defaultTab);
 
   return { path: normalized, tab };
 }
@@ -68,12 +77,12 @@ const OnboardingRoute: React.FC = () => {
 };
 
 const SettingsWindowHost: React.FC<{
-  initialRoute: "/settings" | "/onboarding";
+  initialRoute: "/settings" | "/hub" | "/onboarding";
   tab: SettingsTab;
 }> = ({ initialRoute, tab }) => {
-  const [activeRoute, setActiveRoute] = useState<"/settings" | "/onboarding">(
-    initialRoute,
-  );
+  const [activeRoute, setActiveRoute] = useState<
+    "/settings" | "/hub" | "/onboarding"
+  >(initialRoute);
   const [activeTab, setActiveTab] = useState<SettingsTab>(tab);
   const [tabSyncSeq, setTabSyncSeq] = useState(0);
 
@@ -124,13 +133,14 @@ export const App: React.FC = () => {
     return <OverlayCanvas />;
   }
 
-  if (path === "/settings" || path === "/onboarding") {
-    return (
-      <SettingsWindowHost
-        initialRoute={path === "/onboarding" ? "/onboarding" : "/settings"}
-        tab={tab}
-      />
-    );
+  if (path === "/settings" || path === "/hub" || path === "/onboarding") {
+    const initialRoute =
+      path === "/onboarding"
+        ? "/onboarding"
+        : path === "/hub"
+          ? "/hub"
+          : "/settings";
+    return <SettingsWindowHost initialRoute={initialRoute} tab={tab} />;
   }
 
   return <FloatingBar />;

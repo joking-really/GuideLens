@@ -1,15 +1,24 @@
-//! Bring-Your-Own API key provider supporting Gemini, OpenAI, Anthropic, Groq, and OpenRouter.
+//! Bring-Your-Own API key provider supporting Gemini, OpenAI, Anthropic, Groq, OpenRouter,
+//! DeepSeek, and Custom OpenAI-compatible endpoints (`settings.custom_api_base_url`).
 //! API keys are read from Windows Credential Manager (`SecretStore`) and never logged.
 
+use crate::brain::agent_cli::{self, AgentCliProvider, AgentId};
+use crate::brain::groq_pro::{self, CloudEndpoints};
+use crate::brain::http_client::shared_http_client;
 use crate::brain::json_repair::parse_and_repair_step_plan;
+use crate::brain::ollama::{self, resolve_ollama_base_url, OllamaProvider};
 use crate::brain::provider::{BrainError, BrainErrorCode, BrainProvider, BrainRequest};
-use crate::types::{BrainKind, StepPlan};
+use crate::brain::BrainState;
+use crate::db::DbState;
+use crate::types::{BrainKind, ConnectionTestResult, Settings, StepPlan};
 use async_trait::async_trait;
 use reqwest::multipart::{Form, Part};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::str::FromStr;
+use std::time::{Duration, Instant};
+use tauri::State;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -19,6 +28,8 @@ pub enum ByoProviderId {
     Anthropic,
     Groq,
     OpenRouter,
+    DeepSeek,
+    CustomOpenAi,
 }
 
 impl ByoProviderId {
@@ -29,6 +40,8 @@ impl ByoProviderId {
             "anthropic" => Some(Self::Anthropic),
             "groq" => Some(Self::Groq),
             "openrouter" => Some(Self::OpenRouter),
+            "deepseek" => Some(Self::DeepSeek),
+            "custom_openai" | "custom" => Some(Self::CustomOpenAi),
             _ => None,
         }
     }
@@ -40,6 +53,8 @@ impl ByoProviderId {
             Self::Anthropic => "anthropic",
             Self::Groq => "groq",
             Self::OpenRouter => "openrouter",
+            Self::DeepSeek => "deepseek",
+            Self::CustomOpenAi => "custom_openai",
         }
     }
 
@@ -50,6 +65,8 @@ impl ByoProviderId {
             Self::Anthropic => "claude-3-5-sonnet-latest",
             Self::Groq => "qwen/qwen3.8-27b",
             Self::OpenRouter => "qwen/qwen2.5-vl-72b-instruct",
+            Self::DeepSeek => "deepseek-chat",
+            Self::CustomOpenAi => "gpt-4o-mini",
         }
     }
 
@@ -60,6 +77,18 @@ impl ByoProviderId {
             Self::Anthropic => "https://api.anthropic.com/v1",
             Self::Groq => "https://api.groq.com/openai/v1",
             Self::OpenRouter => "https://openrouter.ai/api/v1",
+            Self::DeepSeek => "https://api.deepseek.com/v1",
+            Self::CustomOpenAi => "http://127.0.0.1:8080/v1",
+        }
+    }
+
+    pub fn supports_vision(&self, model: &str) -> bool {
+        match self {
+            Self::DeepSeek => {
+                let lower = model.to_ascii_lowercase();
+                lower.contains("vl") || lower.contains("vision")
+            }
+            _ => true,
         }
     }
 }
@@ -111,18 +140,20 @@ impl ByoApiProvider {
             .unwrap_or_else(|| provider.default_model())
             .to_string();
 
-        let client = Client::builder()
-            .user_agent("GuideLens/1.0")
-            .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let raw_base = base_url.into();
+        let trimmed_base = raw_base.trim().trim_end_matches('/');
+        let effective_base = if trimmed_base.is_empty() {
+            provider.default_base_url().to_string()
+        } else {
+            trimmed_base.to_string()
+        };
 
         Self {
             provider,
             model,
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            base_url: effective_base,
             api_key: api_key.into(),
-            client,
+            client: shared_http_client().clone(),
         }
     }
 
@@ -133,7 +164,7 @@ impl ByoApiProvider {
                 BrainErrorCode::Unauthenticated,
                 BrainKind::ByoApi,
                 format!(
-                    "{} API key rejected (HTTP {}). Check your key in Settings.",
+                    "{} API key rejected (HTTP {}). Check your key in Control Center.",
                     self.provider.as_str(),
                     status
                 ),
@@ -141,17 +172,27 @@ impl ByoApiProvider {
             402 => BrainError::new(
                 BrainErrorCode::Quota,
                 BrainKind::ByoApi,
-                format!("{} account quota/billing required (HTTP 402).", self.provider.as_str()),
+                format!(
+                    "{} account quota/billing required (HTTP 402).",
+                    self.provider.as_str()
+                ),
             ),
             429 => BrainError::new(
                 BrainErrorCode::RateLimited,
                 BrainKind::ByoApi,
-                format!("{} rate limit exceeded (HTTP 429).", self.provider.as_str()),
+                format!(
+                    "{} rate limit exceeded (HTTP 429).",
+                    self.provider.as_str()
+                ),
             ),
             408 | 504 => BrainError::new(
                 BrainErrorCode::Timeout,
                 BrainKind::ByoApi,
-                format!("{} request timed out (HTTP {}).", self.provider.as_str(), status),
+                format!(
+                    "{} request timed out (HTTP {}).",
+                    self.provider.as_str(),
+                    status
+                ),
             ),
             _ => BrainError::new(
                 BrainErrorCode::Unavailable,
@@ -166,11 +207,31 @@ impl ByoApiProvider {
         }
     }
 
-    async fn call_gemini(&self, req: &BrainRequest) -> Result<String, BrainError> {
+    async fn call_gemini(&self, req: &BrainRequest, json_mode: bool) -> Result<String, BrainError> {
         let url = format!(
             "{}/v1beta/models/{}:generateContent",
             self.base_url, self.model
         );
+
+        let mut parts = vec![json!({ "text": req.user_prompt })];
+        if !req.image_base64.trim().is_empty() {
+            parts.push(json!({
+                "inlineData": {
+                    "mimeType": "image/jpeg",
+                    "data": req.image_base64
+                }
+            }));
+        }
+
+        let mut gen_config = json!({
+            "temperature": if json_mode { 0.1 } else { 0.3 }
+        });
+        if json_mode {
+            gen_config["responseMimeType"] = json!("application/json");
+        }
+        if let Some(max_tok) = req.max_tokens {
+            gen_config["maxOutputTokens"] = json!(max_tok);
+        }
 
         let payload = json!({
             "systemInstruction": {
@@ -178,25 +239,15 @@ impl ByoApiProvider {
             },
             "contents": [{
                 "role": "user",
-                "parts": [
-                    { "text": req.user_prompt },
-                    {
-                        "inlineData": {
-                            "mimeType": "image/jpeg",
-                            "data": req.image_base64
-                        }
-                    }
-                ]
+                "parts": parts
             }],
-            "generationConfig": {
-                "temperature": 0.1,
-                "responseMimeType": "application/json"
-            }
+            "generationConfig": gen_config
         });
 
         let resp = self
             .client
             .post(&url)
+            .timeout(Duration::from_secs(30))
             .header("x-goog-api-key", &self.api_key)
             .json(&payload)
             .send()
@@ -242,35 +293,44 @@ impl ByoApiProvider {
         Ok(text)
     }
 
-    async fn call_anthropic(&self, req: &BrainRequest) -> Result<String, BrainError> {
+    async fn call_anthropic(
+        &self,
+        req: &BrainRequest,
+        json_mode: bool,
+    ) -> Result<String, BrainError> {
         let url = format!("{}/messages", self.base_url);
+        let max_tokens = req.max_tokens.unwrap_or(1024);
+        let mut content = Vec::new();
+        if !req.image_base64.trim().is_empty() {
+            content.push(json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": req.image_base64
+                }
+            }));
+        }
+        content.push(json!({
+            "type": "text",
+            "text": req.user_prompt
+        }));
+
         let payload = json!({
             "model": self.model,
-            "max_tokens": 1024,
-            "temperature": 0.1,
+            "max_tokens": max_tokens,
+            "temperature": if json_mode { 0.1 } else { 0.3 },
             "system": req.system_prompt,
             "messages": [{
                 "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": req.image_base64
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": req.user_prompt
-                    }
-                ]
+                "content": content
             }]
         });
 
         let resp = self
             .client
             .post(&url)
+            .timeout(Duration::from_secs(30))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&payload)
@@ -314,15 +374,33 @@ impl ByoApiProvider {
         Ok(text)
     }
 
-    async fn call_openai_compatible(&self, req: &BrainRequest) -> Result<String, BrainError> {
+    async fn call_openai_compatible(
+        &self,
+        req: &BrainRequest,
+        json_mode: bool,
+    ) -> Result<String, BrainError> {
         let url = format!("{}/chat/completions", self.base_url);
-        let data_uri = format!("data:image/jpeg;base64,{}", req.image_base64);
+        let send_image =
+            !req.image_base64.trim().is_empty() && self.provider.supports_vision(&self.model);
 
-        let payload = json!({
+        let user_content = if send_image {
+            let data_uri = format!("data:image/jpeg;base64,{}", req.image_base64);
+            json!([
+                { "type": "text", "text": req.user_prompt },
+                {
+                    "type": "image_url",
+                    "image_url": { "url": data_uri }
+                }
+            ])
+        } else {
+            json!(req.user_prompt)
+        };
+
+        let max_tokens = req.max_tokens.unwrap_or(1024);
+        let mut payload = json!({
             "model": self.model,
-            "temperature": 0.1,
-            "max_tokens": 1024,
-            "response_format": { "type": "json_object" },
+            "temperature": if json_mode { 0.1 } else { 0.3 },
+            "max_tokens": max_tokens,
             "messages": [
                 {
                     "role": "system",
@@ -330,23 +408,25 @@ impl ByoApiProvider {
                 },
                 {
                     "role": "user",
-                    "content": [
-                        { "type": "text", "text": req.user_prompt },
-                        {
-                            "type": "image_url",
-                            "image_url": { "url": data_uri }
-                        }
-                    ]
+                    "content": user_content
                 }
             ]
         });
 
+        if json_mode {
+            payload["response_format"] = json!({ "type": "json_object" });
+        }
+
         let mut builder = self
             .client
             .post(&url)
-            .header("User-Agent", "GuideLens/1.0")
-            .bearer_auth(&self.api_key)
+            .timeout(Duration::from_secs(30))
+            .header("User-Agent", "GuideLens/2.0")
             .json(&payload);
+
+        if !self.api_key.trim().is_empty() {
+            builder = builder.bearer_auth(&self.api_key);
+        }
 
         if self.provider == ByoProviderId::OpenRouter {
             builder = builder
@@ -369,7 +449,11 @@ impl ByoApiProvider {
             BrainError::new(
                 BrainErrorCode::InvalidResponse,
                 BrainKind::ByoApi,
-                format!("{} returned invalid JSON envelope: {}", self.provider.as_str(), e),
+                format!(
+                    "{} returned invalid JSON envelope: {}",
+                    self.provider.as_str(),
+                    e
+                ),
             )
         })?;
 
@@ -393,11 +477,40 @@ impl ByoApiProvider {
             return Err(BrainError::new(
                 BrainErrorCode::InvalidResponse,
                 BrainKind::ByoApi,
-                format!("{} response missing choices[0].message.content", self.provider.as_str()),
+                format!(
+                    "{} response missing choices[0].message.content",
+                    self.provider.as_str()
+                ),
             ));
         }
 
         Ok(text)
+    }
+
+    /// Plain-text generation (without JSON-schema forcing) for connection tests & Nightly Diary summaries.
+    pub async fn generate_text(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_tokens: u32,
+    ) -> Result<String, BrainError> {
+        let req = BrainRequest {
+            query: user_prompt.to_string(),
+            system_prompt: system_prompt.to_string(),
+            user_prompt: user_prompt.to_string(),
+            max_tokens: Some(max_tokens),
+            ..Default::default()
+        };
+
+        match self.provider {
+            ByoProviderId::Gemini => self.call_gemini(&req, false).await,
+            ByoProviderId::Anthropic => self.call_anthropic(&req, false).await,
+            ByoProviderId::OpenAi
+            | ByoProviderId::Groq
+            | ByoProviderId::OpenRouter
+            | ByoProviderId::DeepSeek
+            | ByoProviderId::CustomOpenAi => self.call_openai_compatible(&req, false).await,
+        }
     }
 
     fn map_transport_error(&self, err: reqwest::Error) -> BrainError {
@@ -425,11 +538,13 @@ impl BrainProvider for ByoApiProvider {
 
     async fn generate_plan(&self, req: &BrainRequest) -> Result<StepPlan, BrainError> {
         let raw_text = match self.provider {
-            ByoProviderId::Gemini => self.call_gemini(req).await?,
-            ByoProviderId::Anthropic => self.call_anthropic(req).await?,
-            ByoProviderId::OpenAi | ByoProviderId::Groq | ByoProviderId::OpenRouter => {
-                self.call_openai_compatible(req).await?
-            }
+            ByoProviderId::Gemini => self.call_gemini(req, true).await?,
+            ByoProviderId::Anthropic => self.call_anthropic(req, true).await?,
+            ByoProviderId::OpenAi
+            | ByoProviderId::Groq
+            | ByoProviderId::OpenRouter
+            | ByoProviderId::DeepSeek
+            | ByoProviderId::CustomOpenAi => self.call_openai_compatible(req, true).await?,
         };
 
         parse_and_repair_step_plan(&raw_text).map_err(|e| {
@@ -453,10 +568,7 @@ pub async fn transcribe_with_whisper_api(
     model: &str,
     audio_bytes: Vec<u8>,
 ) -> Result<String, String> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+    let client = shared_http_client();
 
     let part = Part::bytes(audio_bytes)
         .file_name("voice.webm")
@@ -470,6 +582,7 @@ pub async fn transcribe_with_whisper_api(
     let url = format!("{}/audio/transcriptions", base_url.trim_end_matches('/'));
     let resp = client
         .post(&url)
+        .timeout(Duration::from_secs(30))
         .bearer_auth(api_key)
         .multipart(form)
         .send()
@@ -493,6 +606,441 @@ pub async fn transcribe_with_whisper_api(
         .to_string())
 }
 
+/// Pure helper implementing `test_brain_connection` with real roundtrip timing.
+pub async fn test_brain_connection_impl(
+    settings: &Settings,
+    brain_state: &BrainState,
+    brain: &str,
+    provider: Option<&str>,
+    model: Option<&str>,
+    base_url: Option<&str>,
+) -> ConnectionTestResult {
+    let clean_brain = brain.trim().to_ascii_lowercase();
+    let started = Instant::now();
+
+    match clean_brain.as_str() {
+        "byo_api" => {
+            let pid = provider
+                .and_then(ByoProviderId::from_str_id)
+                .or_else(|| settings.byo_provider.as_deref().and_then(ByoProviderId::from_str_id))
+                .unwrap_or(ByoProviderId::OpenAi);
+
+            let effective_model = model
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .or_else(|| {
+                    if settings.byo_provider.as_deref() == Some(pid.as_str()) {
+                        settings.byo_model.clone()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| pid.default_model().to_string());
+
+            let effective_base = base_url
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .or_else(|| {
+                    if pid == ByoProviderId::CustomOpenAi {
+                        settings
+                            .custom_api_base_url
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| pid.default_base_url().to_string());
+
+            let api_key = brain_state
+                .secrets
+                .get_api_key(pid.as_str())
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+
+            if api_key.is_empty() && pid != ByoProviderId::CustomOpenAi {
+                return ConnectionTestResult {
+                    ok: false,
+                    brain: "byo_api".to_string(),
+                    provider: Some(pid.as_str().to_string()),
+                    model: Some(effective_model),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    message: format!(
+                        "No API key saved for {}. Add it in Control Center -> Brains & Keys.",
+                        pid.as_str()
+                    ),
+                };
+            }
+
+            let client = ByoApiProvider::with_base_url(
+                pid,
+                api_key,
+                Some(&effective_model),
+                effective_base,
+            );
+            match client
+                .generate_text("Reply concisely.", "Reply with OK.", 16)
+                .await
+            {
+                Ok(_) => {
+                    let latency_ms = started.elapsed().as_millis() as u64;
+                    ConnectionTestResult {
+                        ok: true,
+                        brain: "byo_api".to_string(),
+                        provider: Some(pid.as_str().to_string()),
+                        model: Some(effective_model.clone()),
+                        latency_ms,
+                        message: format!(
+                            "Connected to {} ({}) in {}ms.",
+                            pid.as_str(),
+                            effective_model,
+                            latency_ms
+                        ),
+                    }
+                }
+                Err(err) => ConnectionTestResult {
+                    ok: false,
+                    brain: "byo_api".to_string(),
+                    provider: Some(pid.as_str().to_string()),
+                    model: Some(effective_model),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    message: err.message,
+                },
+            }
+        }
+        "local_vlm" => {
+            let effective_base = base_url
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .unwrap_or_else(resolve_ollama_base_url);
+            let target_model = model
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&settings.ollama_model)
+                .to_string();
+            let status = ollama::check_ollama_status(&effective_base).await;
+            let latency_ms = started.elapsed().as_millis() as u64;
+            if !status.running {
+                return ConnectionTestResult {
+                    ok: false,
+                    brain: "local_vlm".to_string(),
+                    provider: Some("ollama".to_string()),
+                    model: Some(target_model),
+                    latency_ms,
+                    message: format!("Ollama is not reachable at {}.", effective_base),
+                };
+            }
+            let model_present = status.models.iter().any(|m| {
+                m == &target_model
+                    || m.starts_with(&format!("{}:", target_model))
+                    || target_model.starts_with(&format!("{}:", m))
+            });
+            if model_present || status.models.is_empty() {
+                ConnectionTestResult {
+                    ok: true,
+                    brain: "local_vlm".to_string(),
+                    provider: Some("ollama".to_string()),
+                    model: Some(target_model),
+                    latency_ms,
+                    message: format!(
+                        "Ollama ready ({} model(s) installed) in {}ms.",
+                        status.models.len(),
+                        latency_ms
+                    ),
+                }
+            } else {
+                ConnectionTestResult {
+                    ok: false,
+                    brain: "local_vlm".to_string(),
+                    provider: Some("ollama".to_string()),
+                    model: Some(target_model.clone()),
+                    latency_ms,
+                    message: format!(
+                        "Ollama is running, but model '{}' is not installed yet.",
+                        target_model
+                    ),
+                }
+            }
+        }
+        "agent_cli" => {
+            let agent = provider
+                .and_then(AgentId::from_str_id)
+                .or_else(|| settings.agent_id.as_deref().and_then(AgentId::from_str_id))
+                .unwrap_or(AgentId::Claude);
+            let cli = if agent == AgentId::Custom {
+                AgentCliProvider::with_custom_cmd(agent, settings.custom_agent_cmd.clone())
+            } else {
+                AgentCliProvider::new(agent)
+            };
+            match cli.probe_version().await {
+                Ok(ver) => {
+                    let latency_ms = started.elapsed().as_millis() as u64;
+                    ConnectionTestResult {
+                        ok: true,
+                        brain: "agent_cli".to_string(),
+                        provider: Some(agent.as_str().to_string()),
+                        model: None,
+                        latency_ms,
+                        message: format!("{} ({}ms)", ver, latency_ms),
+                    }
+                }
+                Err(msg) => ConnectionTestResult {
+                    ok: false,
+                    brain: "agent_cli".to_string(),
+                    provider: Some(agent.as_str().to_string()),
+                    model: None,
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    message: msg,
+                },
+            }
+        }
+        "groq_pro" => {
+            let endpoints = CloudEndpoints::from_env(Some(&settings.cloud_url));
+            match groq_pro::auth_status(&brain_state.secrets, &endpoints).await {
+                Ok(status) => {
+                    let latency_ms = started.elapsed().as_millis() as u64;
+                    let ok = status.logged_in && status.status.eq_ignore_ascii_case("active");
+                    ConnectionTestResult {
+                        ok,
+                        brain: "groq_pro".to_string(),
+                        provider: Some("groq_pro".to_string()),
+                        model: None,
+                        latency_ms,
+                        message: if ok {
+                            format!("Pro account active ({}/{})", status.usage, status.limit)
+                        } else if status.logged_in {
+                            format!("Signed in, subscription status: {}", status.status)
+                        } else {
+                            "Not signed in to GuideLens Pro.".to_string()
+                        },
+                    }
+                }
+                Err(msg) => ConnectionTestResult {
+                    ok: false,
+                    brain: "groq_pro".to_string(),
+                    provider: Some("groq_pro".to_string()),
+                    model: None,
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    message: msg,
+                },
+            }
+        }
+        other => ConnectionTestResult {
+            ok: false,
+            brain: other.to_string(),
+            provider: provider.map(String::from),
+            model: model.map(String::from),
+            latency_ms: started.elapsed().as_millis() as u64,
+            message: format!("Unknown brain type '{}'", other),
+        },
+    }
+}
+
+/// Tests a configured brain/provider/model with a real lightweight roundtrip and returns latency.
+pub async fn test_brain_connection(
+    db: State<'_, DbState>,
+    brain_state: State<'_, BrainState>,
+    brain: String,
+    provider: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
+) -> Result<ConnectionTestResult, String> {
+    let settings = db.get_settings().unwrap_or_default();
+    Ok(test_brain_connection_impl(
+        &settings,
+        &brain_state,
+        &brain,
+        provider.as_deref(),
+        model.as_deref(),
+        base_url.as_deref(),
+    )
+    .await)
+}
+
+const NIGHTLY_SUMMARY_SYSTEM_PROMPT: &str = "You are GuideLens Screen Day, a thoughtful personal work-diary assistant. Summarize the user's captured day clearly in concise Markdown with sections for Highlights, Projects & Tasks, Meetings & Screen Discussions, and Follow-ups.";
+
+/// Pure helper used by `generate_day_summary_text` (and unit tests with mocked endpoints).
+pub async fn generate_day_summary_text_with_overrides(
+    settings: &Settings,
+    brain_state: &BrainState,
+    prompt: &str,
+    ollama_base_override: Option<&str>,
+    byo_base_override: Option<&str>,
+) -> Result<String, String> {
+    let effective_mode = settings
+        .summary_brain_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&settings.brain_mode);
+
+    let effective_provider = settings
+        .summary_byo_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or(settings.byo_provider.as_deref());
+
+    let effective_model = settings
+        .summary_byo_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or(settings.byo_model.as_deref());
+
+    let candidates: Vec<BrainKind> = if !effective_mode.eq_ignore_ascii_case("auto") {
+        match BrainKind::from_str(effective_mode) {
+            Ok(kind) => vec![kind],
+            Err(_) => vec![BrainKind::ByoApi, BrainKind::AgentCli, BrainKind::LocalVlm],
+        }
+    } else {
+        vec![BrainKind::ByoApi, BrainKind::AgentCli, BrainKind::LocalVlm]
+    };
+
+    let full_cli_prompt = format!("{}\n\n{}", NIGHTLY_SUMMARY_SYSTEM_PROMPT, prompt);
+    let mut errors = Vec::new();
+
+    for kind in candidates {
+        match kind {
+            BrainKind::ByoApi => {
+                let pid = effective_provider
+                    .and_then(ByoProviderId::from_str_id)
+                    .or_else(|| {
+                        brain_state
+                            .secrets
+                            .list_api_key_providers()
+                            .ok()
+                            .and_then(|list| list.into_iter().find_map(|p| ByoProviderId::from_str_id(&p)))
+                    });
+
+                if let Some(pid) = pid {
+                    let key = brain_state
+                        .secrets
+                        .get_api_key(pid.as_str())
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+                    let has_custom_base = pid == ByoProviderId::CustomOpenAi
+                        && settings
+                            .custom_api_base_url
+                            .as_deref()
+                            .is_some_and(|u| !u.trim().is_empty());
+
+                    if !key.is_empty() || has_custom_base || byo_base_override.is_some() {
+                        let base = byo_base_override
+                            .or_else(|| {
+                                if pid == ByoProviderId::CustomOpenAi {
+                                    settings
+                                        .custom_api_base_url
+                                        .as_deref()
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty())
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or_else(|| pid.default_base_url());
+                        let provider =
+                            ByoApiProvider::with_base_url(pid, key, effective_model, base);
+                        match provider
+                            .generate_text(NIGHTLY_SUMMARY_SYSTEM_PROMPT, prompt, 900)
+                            .await
+                        {
+                            Ok(text) if !text.trim().is_empty() => return Ok(text),
+                            Ok(_) => errors.push("BYO API returned empty summary".to_string()),
+                            Err(e) => errors.push(e.message),
+                        }
+                    } else {
+                        errors.push(format!("No API key configured for {}", pid.as_str()));
+                    }
+                } else {
+                    errors.push("No BYO API provider configured".to_string());
+                }
+            }
+            BrainKind::AgentCli => {
+                let detected =
+                    brain_state.detect_agents_cached(settings.custom_agent_cmd.as_deref());
+                let chosen = settings
+                    .agent_id
+                    .as_deref()
+                    .and_then(AgentId::from_str_id)
+                    .filter(|id| {
+                        detected
+                            .iter()
+                            .any(|d| d.id == id.as_str() && d.installed)
+                    })
+                    .or_else(|| {
+                        detected
+                            .iter()
+                            .find(|d| d.installed)
+                            .and_then(|d| AgentId::from_str_id(&d.id))
+                    });
+
+                if let Some(agent) = chosen {
+                    let cli = if agent == AgentId::Custom {
+                        AgentCliProvider::with_custom_cmd(agent, settings.custom_agent_cmd.clone())
+                    } else {
+                        AgentCliProvider::new(agent)
+                    };
+                    match cli.generate_text(&full_cli_prompt).await {
+                        Ok(text) if !text.trim().is_empty() => return Ok(text),
+                        Ok(_) => errors.push("Agent CLI returned empty summary".to_string()),
+                        Err(e) => errors.push(e),
+                    }
+                } else {
+                    errors.push("No Agent CLI installed".to_string());
+                }
+            }
+            BrainKind::LocalVlm => {
+                let base = ollama_base_override
+                    .map(String::from)
+                    .unwrap_or_else(resolve_ollama_base_url);
+                let model = if effective_mode.eq_ignore_ascii_case("local_vlm") {
+                    effective_model.unwrap_or(&settings.ollama_model)
+                } else {
+                    &settings.ollama_model
+                };
+                let provider = OllamaProvider::with_base_url(base, model);
+                match provider
+                    .generate_text(NIGHTLY_SUMMARY_SYSTEM_PROMPT, prompt)
+                    .await
+                {
+                    Ok(text) if !text.trim().is_empty() => return Ok(text),
+                    Ok(_) => errors.push("Ollama returned empty summary".to_string()),
+                    Err(e) => errors.push(e.message),
+                }
+            }
+            BrainKind::GroqPro | BrainKind::AgentMcp => {
+                let _ = agent_cli::detect_agents();
+                errors.push("Groq Pro / MCP does not serve plain-text diary summaries".to_string());
+            }
+        }
+    }
+
+    Err(if errors.is_empty() {
+        "No summary brain available".to_string()
+    } else {
+        errors.join("; ")
+    })
+}
+
+/// Generates a Nightly Diary summary using `summary_brain_mode` / `summary_byo_provider` / `summary_byo_model`
+/// when configured, falling back to the primary brain configuration.
+pub async fn generate_day_summary_text(
+    db: &DbState,
+    brain_state: &BrainState,
+    prompt: &str,
+) -> Result<String, String> {
+    let settings = db.get_settings().unwrap_or_default();
+    generate_day_summary_text_with_overrides(&settings, brain_state, prompt, None, None).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,6 +1058,7 @@ mod tests {
             system_prompt: "Output StepPlan JSON".to_string(),
             user_prompt: "Open Settings".to_string(),
             conversation_history: vec![],
+            ..Default::default()
         }
     }
 
@@ -581,11 +1130,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn openai_groq_openrouter_parse_step_plan_and_map_401_429() {
+    async fn openai_groq_openrouter_deepseek_custom_parse_and_map_errors() {
         for pid in [
             ByoProviderId::OpenAi,
             ByoProviderId::Groq,
             ByoProviderId::OpenRouter,
+            ByoProviderId::DeepSeek,
+            ByoProviderId::CustomOpenAi,
         ] {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
@@ -621,6 +1172,62 @@ mod tests {
         let err = bad.generate_plan(&sample_req()).await.unwrap_err();
         assert_eq!(err.code, BrainErrorCode::Unauthenticated);
         assert!(!err.message.contains("sk-super-secret-xyz"));
+    }
+
+    #[tokio::test]
+    async fn test_brain_connection_and_day_summary_override_work() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{
+                    "message": { "content": "# Highlights\n- Built GuideLens v2" }
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let brain_state = BrainState::new();
+        let brain_state = BrainState {
+            secrets: crate::brain::secrets::SecretStore::new_memory(),
+            ..brain_state
+        };
+        brain_state
+            .secrets
+            .set_api_key("deepseek", "sk-ds-test")
+            .unwrap();
+
+        let settings = Settings {
+            brain_mode: "local_vlm".to_string(),
+            summary_brain_mode: Some("byo_api".to_string()),
+            summary_byo_provider: Some("deepseek".to_string()),
+            summary_byo_model: Some("deepseek-chat".to_string()),
+            custom_api_base_url: Some(server.uri()),
+            ..Default::default()
+        };
+
+        let conn_res = test_brain_connection_impl(
+            &settings,
+            &brain_state,
+            "byo_api",
+            Some("deepseek"),
+            Some("deepseek-chat"),
+            Some(&server.uri()),
+        )
+        .await;
+        assert!(conn_res.ok, "expected connection test ok: {:?}", conn_res);
+        assert_eq!(conn_res.provider.as_deref(), Some("deepseek"));
+
+        let summary = generate_day_summary_text_with_overrides(
+            &settings,
+            &brain_state,
+            "Summarize today's commits",
+            None,
+            Some(&server.uri()),
+        )
+        .await
+        .expect("summary text should succeed");
+        assert!(summary.contains("Built GuideLens v2"));
     }
 
     #[tokio::test]

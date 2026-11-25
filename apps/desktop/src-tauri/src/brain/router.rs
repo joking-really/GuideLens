@@ -1,11 +1,16 @@
 //! Multi-brain router: selects the optimal provider per `settings` + `app_preferences`,
 //! executes the request, enforces StepPlan constraints, and constructs graceful fallback options.
 
-use crate::brain::agent_cli::{detect_agents, AgentCliProvider, AgentId, DetectedAgent};
+use crate::brain::agent_cli::{
+    detect_agents_with_custom, resolve_custom_command, AgentCliProvider, AgentId, DetectedAgent,
+};
 use crate::brain::byo_api::{ByoApiProvider, ByoProviderId};
 use crate::brain::groq_pro::{AuthStatus, CloudEndpoints, GroqProProvider};
 use crate::brain::ollama::{resolve_ollama_base_url, OllamaProvider};
-use crate::brain::prompts::{build_system_prompt, build_user_prompt};
+use crate::brain::prompts::{
+    build_grounded_system_prompt, build_grounded_user_prompt, build_system_prompt,
+    build_user_prompt, GroundedPromptContext,
+};
 use crate::brain::provider::{BrainError, BrainErrorCode, BrainProvider, BrainRequest};
 use crate::brain::secrets::SecretStore;
 use crate::types::{BrainKind, Settings, StepPlan};
@@ -33,7 +38,7 @@ pub struct BrainRoutingInput<'a> {
 }
 
 /// Resolves which `ByoProviderId` and API key to use (prefers `settings.byo_provider`,
-/// falling back to any other configured BYO key in Credential Manager).
+/// falling back to any other configured BYO key in Credential Manager or `custom_api_base_url`).
 pub fn resolve_byo_provider_and_key(
     settings: &Settings,
     secrets: &SecretStore,
@@ -42,6 +47,14 @@ pub fn resolve_byo_provider_and_key(
         if let Some(pid) = ByoProviderId::from_str_id(pref) {
             if let Ok(Some(key)) = secrets.get_api_key(pid.as_str()) {
                 return Some((pid, key));
+            }
+            if pid == ByoProviderId::CustomOpenAi
+                && settings
+                    .custom_api_base_url
+                    .as_deref()
+                    .is_some_and(|u| !u.trim().is_empty())
+            {
+                return Some((pid, String::new()));
             }
         }
     }
@@ -68,6 +81,12 @@ pub fn resolve_selected_installed_agent(
         .agent_id
         .as_deref()
         .and_then(AgentId::from_str_id)?;
+
+    if selected == AgentId::Custom
+        && resolve_custom_command(settings.custom_agent_cmd.as_deref()).is_some()
+    {
+        return Some(AgentId::Custom);
+    }
 
     let is_installed = detected_agents
         .iter()
@@ -101,9 +120,6 @@ pub fn is_groq_pro_eligible(secrets: &SecretStore, cached_auth: Option<&AuthStat
 }
 
 /// Computes the ordered list of candidate `BrainKind`s for the current context.
-///
-/// Order in `auto` mode (defaults to `decisions.md` + brief):
-/// connected agent CLI if chosen -> BYO API key if set -> Groq Pro if logged-in Pro -> Ollama (`local_vlm`).
 pub fn resolve_brain_order(input: &BrainRoutingInput<'_>) -> (bool, Vec<BrainKind>) {
     if let Some(explicit) = input.brain_override {
         return (true, vec![explicit]);
@@ -209,7 +225,7 @@ pub struct CaptureContext {
     pub screen_resolution: (u32, u32),
 }
 
-/// Constructs a `BrainRequest` using the shared system prompt and the 15 app profiles.
+/// Constructs a legacy `BrainRequest` using the shared system prompt and the 15 app profiles.
 pub fn build_brain_request(
     query: &str,
     capture: CaptureContext,
@@ -232,6 +248,48 @@ pub fn build_brain_request(
         system_prompt,
         user_prompt,
         conversation_history,
+        has_som: false,
+        max_tokens: None,
+    }
+}
+
+/// Constructs a v2 Set-of-Mark + KG Memory + Companion Persona `BrainRequest`.
+pub fn build_grounded_brain_request(
+    query: &str,
+    capture: CaptureContext,
+    element_table_prompt: &str,
+    memory_hints: &str,
+    companion_id: &str,
+    live_mode: bool,
+    conversation_history: Vec<String>,
+) -> BrainRequest {
+    let system_prompt = build_grounded_system_prompt(
+        &capture.active_app,
+        &capture.window_title,
+        companion_id,
+        live_mode,
+    );
+    let user_prompt = build_grounded_user_prompt(&GroundedPromptContext {
+        query,
+        active_exe: &capture.active_app,
+        window_title: &capture.window_title,
+        screen_size: capture.screen_resolution,
+        element_table_prompt,
+        memory_hints,
+        session_history: &conversation_history,
+    });
+    BrainRequest {
+        query: query.trim().to_string(),
+        image_base64: capture.image_base64,
+        image_path: capture.image_path,
+        active_app: capture.active_app,
+        window_title: capture.window_title,
+        screen_resolution: capture.screen_resolution,
+        system_prompt,
+        user_prompt,
+        conversation_history,
+        has_som: !element_table_prompt.trim().is_empty(),
+        max_tokens: if live_mode { Some(280) } else { None },
     }
 }
 
@@ -253,7 +311,7 @@ pub async fn route_and_execute(
     let detected = match &ctx.overrides.detected_agents_override {
         Some(list) => list.as_slice(),
         None => {
-            owned_agents = detect_agents();
+            owned_agents = detect_agents_with_custom(ctx.settings.custom_agent_cmd.as_deref());
             owned_agents.as_slice()
         }
     };
@@ -287,8 +345,6 @@ pub async fn route_and_execute(
             }
             Err(err) => {
                 let has_next = idx + 1 < candidates.len();
-                // In auto mode, if Groq Pro token turns out not to be Pro/valid, seamlessly continue to next brain.
-                // However, on Groq Timeout/429 (or when explicitly selected), surface the graceful 1-click fallback prompt.
                 let should_continue_auto = !is_explicit
                     && has_next
                     && *kind == BrainKind::GroqPro
@@ -348,9 +404,29 @@ async fn execute_single_provider(
             let base = overrides
                 .byo_base_url
                 .as_deref()
+                .or_else(|| {
+                    if pid == ByoProviderId::CustomOpenAi {
+                        settings
+                            .custom_api_base_url
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_else(|| pid.default_base_url());
-            let provider =
-                ByoApiProvider::with_base_url(pid, key, settings.byo_model.as_deref(), base);
+            let model_override = if settings
+                .byo_provider
+                .as_deref()
+                .and_then(ByoProviderId::from_str_id)
+                == Some(pid)
+            {
+                settings.byo_model.as_deref()
+            } else {
+                None
+            };
+            let provider = ByoApiProvider::with_base_url(pid, key, model_override, base);
             provider.generate_plan(req).await
         }
         BrainKind::AgentCli => {
@@ -373,6 +449,8 @@ async fn execute_single_provider(
                     overrides.agent_custom_args.clone(),
                     std::time::Duration::from_secs(30),
                 )
+            } else if chosen == AgentId::Custom {
+                AgentCliProvider::with_custom_cmd(chosen, settings.custom_agent_cmd.clone())
             } else {
                 AgentCliProvider::new(chosen)
             };
