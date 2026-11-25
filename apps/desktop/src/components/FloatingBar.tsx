@@ -43,11 +43,9 @@ import { getCopilotVoiceEngine, type TinyVocaState } from "../lib/tinyVocaClient
 import {
   type AskError,
   type BrainKind,
-  type BrainMode,
   type BrainStatusPayload,
   clampInstruction,
   DEFAULT_SETTINGS,
-  formatBrainPillLabel,
   type LiveSessionState,
   type ResolvedStep,
   type Settings,
@@ -57,14 +55,6 @@ import {
 import { OnboardingView } from "./OnboardingView";
 import { ResponseBlock } from "./ResponseBlock";
 import { VoiceIndicator } from "./VoiceIndicator";
-
-const BRAIN_CYCLE_ORDER: BrainMode[] = [
-  "local_vlm",
-  "byo_api",
-  "groq_pro",
-  "agent_cli",
-  "auto",
-];
 
 export interface FloatingBarProps {
   initialSettings?: Partial<Settings>;
@@ -78,13 +68,13 @@ function formatLiveStatusLabel(status: LiveSessionState["status"]): string {
     case "observing":
       return "Observing screen";
     case "guiding":
-      return "Live Guiding";
+      return "Live guiding";
     case "waiting_settle":
       return "Settling";
     case "paused":
       return "Paused";
     case "completed":
-      return "Goal Complete";
+      return "Goal complete";
     case "idle":
     default:
       return "Standby";
@@ -121,7 +111,6 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
   );
   const [error, setError] = useState<AskError | null>(null);
 
-  const [activeBrain, setActiveBrain] = useState<BrainKind | null>(null);
   const [mode, setMode] = useState<StepMode>("guide");
   const [steps, setSteps] = useState<ResolvedStep[]>([]);
   const [stepIndex, setStepIndex] = useState(0);
@@ -131,7 +120,9 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
   const [liveSession, setLiveSession] = useState<LiveSessionState | null>(null);
   const [livePending, setLivePending] = useState(false);
   const [screendayActive, setScreendayActive] = useState<boolean>(
-    Boolean(initialSettings?.screenday_enabled ?? DEFAULT_SETTINGS.screenday_enabled),
+    Boolean(
+      initialSettings?.screenday_enabled ?? DEFAULT_SETTINGS.screenday_enabled,
+    ),
   );
   const [screendayPulse, setScreendayPulse] = useState(false);
 
@@ -370,22 +361,39 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
   }, [focusInput, initialSettings, voiceEngine]);
 
   const currentStep: ResolvedStep | null = steps[stepIndex] ?? null;
-  const hasLiveStrip =
-    Boolean(liveSession) &&
-    liveSession!.status !== "idle" &&
+
+  const latestTurn =
+    liveSession && liveSession.turns.length > 0
+      ? liveSession.turns[liveSession.turns.length - 1]
+      : null;
+  const liveStatusLine =
+    liveSession &&
+    liveSession.status !== "idle" &&
     !loading &&
     !error &&
-    !currentStep;
+    !currentStep
+      ? (() => {
+          const base = formatLiveStatusLabel(liveSession.status);
+          const turnPart =
+            liveSession.turn_count > 0 ? ` · Turn ${liveSession.turn_count}` : "";
+          const whisper = clampInstruction(
+            latestTurn?.spoken_text ??
+              (isLiveActive ? liveSession.goal : null),
+          );
+          return whisper ? `${base}${turnPart} — ${whisper}` : `${base}${turnPart}`;
+        })()
+      : null;
+
   const isResponseExpanded =
-    loading || Boolean(error) || Boolean(currentStep) || hasLiveStrip;
+    loading || Boolean(error) || Boolean(currentStep) || Boolean(liveStatusLine);
 
   useEffect(() => {
     if (showOnboarding) {
       void resizeBarWindow(620, 620);
     } else if (isResponseExpanded) {
-      void resizeBarWindow(210, 620);
+      void resizeBarWindow(206, 620);
     } else {
-      void resizeBarWindow(54, 620);
+      void resizeBarWindow(50, 620);
     }
   }, [isResponseExpanded, showOnboarding]);
 
@@ -614,7 +622,6 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
 
       try {
         const res = await ask(trimmed, brainOverride);
-        setActiveBrain(res.brain);
         setMode(res.plan.mode);
         setSteps(res.resolved_steps);
         setStepIndex(0);
@@ -648,49 +655,12 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     void submitQuery(trimmed);
   };
 
-  const handleCycleBrain = async () => {
-    const currentIdx = BRAIN_CYCLE_ORDER.indexOf(settings.brain_mode);
-    const nextMode =
-      BRAIN_CYCLE_ORDER[(currentIdx + 1) % BRAIN_CYCLE_ORDER.length];
-    const updated: Settings = {
-      ...settings,
-      brain_mode: nextMode,
-    };
-    setLocalSettings(updated);
-    setActiveBrain(null);
-    try {
-      await setSettings(updated);
-    } catch {
-      // Ignore outside Tauri
-    }
-  };
-
   const handleToggleVoice = async (nextVoice: boolean) => {
     const updated: Settings = {
       ...settings,
       voice_enabled: nextVoice,
     };
     setLocalSettings(updated);
-    try {
-      await setSettings(updated);
-    } catch {
-      // Ignore outside Tauri
-    }
-  };
-
-  const handleToggleTts = async () => {
-    if (isSpeaking || settings.tts_enabled) {
-      voiceEngine.stop();
-    }
-    const nextEnabled = !settings.tts_enabled;
-    const updated: Settings = {
-      ...latestSettingsRef.current,
-      tts_enabled: nextEnabled,
-    };
-    setLocalSettings(updated);
-    if (nextEnabled) {
-      void voiceEngine.load().catch(() => {});
-    }
     try {
       await setSettings(updated);
     } catch {
@@ -845,7 +815,6 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     await openSettingsWindow("/settings", tab);
   };
 
-  const pillLabel = formatBrainPillLabel(settings, activeBrain);
   const companionMeta = getCompanionPersona(settings.companion_id);
 
   const deriveCompanionEmotion = (): CompanionEmotion => {
@@ -871,27 +840,17 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
 
   const barSurfaceClass = settings.high_contrast
     ? "bg-[#09090B]/95 backdrop-blur-2xl border-2 border-[#FACC15]"
-    : "bg-[#080A0F]/90 backdrop-blur-2xl border border-white/15";
-
-  const latestTurn =
-    liveSession && liveSession.turns.length > 0
-      ? liveSession.turns[liveSession.turns.length - 1]
-      : null;
-  const whisperText = clampInstruction(
-    latestTurn?.spoken_text ??
-      currentStep?.spoken_text ??
-      (isLiveActive ? liveSession?.goal : null),
-  );
+    : "bg-[#111215]/95 backdrop-blur-2xl border border-white/[0.09]";
 
   return (
     <div
       data-testid="floating-bar-root"
       className="flex flex-col items-start select-none"
     >
-      {/* Sleek Live Session & Companion Obsidian Capsule */}
+      {/* Minimalist Obsidian Capsule */}
       <div
         role="search"
-        aria-label="GuideLens Live Companion Capsule"
+        aria-label="GuideLens Companion Capsule"
         data-tauri-drag-region
         data-testid="floating-bar"
         onMouseDown={(e) => {
@@ -899,7 +858,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
             void startBarDrag();
           }
         }}
-        className={`${barSurfaceClass} w-[620px] max-w-[96vw] h-[54px] rounded-full px-2.5 flex items-center gap-1.5 shadow-[0_20px_50px_rgba(0,0,0,0.68)]`}
+        className={`${barSurfaceClass} w-[620px] max-w-[96vw] h-[50px] rounded-2xl px-2.5 flex items-center gap-1.5 shadow-2xl`}
       >
         {/* Drag Grip */}
         <div
@@ -907,106 +866,95 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
           aria-hidden="true"
           title="Drag capsule"
           onMouseDown={() => void startBarDrag()}
-          className="flex flex-col gap-0.5 pl-1 pr-0.5 py-2 cursor-grab active:cursor-grabbing text-[#A1A1AA]/55 hover:text-[#A1A1AA]"
+          className="flex flex-col gap-0.5 pl-1 pr-0.5 py-2 cursor-grab active:cursor-grabbing text-[#5C606A] hover:text-[#A1A1AA] transition-colors"
         >
           <span className="w-1 h-1 rounded-full bg-current" />
           <span className="w-1 h-1 rounded-full bg-current" />
           <span className="w-1 h-1 rounded-full bg-current" />
         </div>
 
-        {/* 1. Mini Live Companion Badge */}
+        {/* 1. Companion Icon Button */}
         <button
           type="button"
           onClick={() => void handleOpenControlCenter("companions")}
           title={`${companionMeta.name} (${companionEmotion}) — open Companion Studio`}
           aria-label={`Companion ${companionMeta.name}. Open Companion Studio.`}
           data-testid="capsule-companion-badge"
-          className="shrink-0 relative flex items-center justify-center w-9 h-9 rounded-full bg-white/[0.04] border border-white/10 hover:border-[#38BDF8]/50 transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8]"
+          className="shrink-0 relative flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] hover:border-white/15 transition-colors focus:outline-none focus:ring-1 focus:ring-white/25"
         >
           {settings.companion_id === "none" ? (
-            <span className="w-3 h-3 rounded-full bg-slate-500/70 ring-2 ring-slate-400/20" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#71717A]" />
           ) : (
             <CompanionSprite
               companionId={settings.companion_id}
               emotion={companionEmotion}
-              size={28}
+              size={24}
             />
           )}
         </button>
 
-        {/* 2. Brain Mode Pill */}
-        <button
-          type="button"
-          onClick={() => void handleCycleBrain()}
-          aria-label={`Brain mode: ${pillLabel}. Click to switch brain.`}
-          data-testid="brain-mode-pill"
-          className="shrink-0 px-2.5 py-1 rounded-full text-[11.5px] font-semibold bg-[#38BDF8]/15 text-[#38BDF8] border border-[#38BDF8]/35 hover:bg-[#38BDF8]/25 transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8]"
-        >
-          {pillLabel}
-        </button>
-
-        {/* 3. Quick-Ask Composer / Live Turn Input */}
-        <form onSubmit={handleFormSubmit} className="flex-1 min-w-[110px]">
+        {/* 2. Borderless Ask Input */}
+        <form onSubmit={handleFormSubmit} className="flex-1 min-w-[140px]">
           <input
             ref={inputRef}
             type="text"
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={
-              isLiveActive
-                ? "Follow up in live session..."
-                : "Ask GuideLens anything on screen..."
-            }
+            placeholder={isLiveActive ? "Follow up..." : "Ask anything..."}
             aria-label="Ask how to do anything or what's on screen"
             data-testid="bar-query-input"
-            className="w-full bg-transparent px-1 text-[13px] text-[#F4F4F5] placeholder-[#94A3B8] focus:outline-none truncate"
+            className="w-full bg-transparent px-1.5 text-[13px] text-[#F4F4F5] placeholder-[#71717A] focus:outline-none truncate"
           />
         </form>
 
-        {/* 4. Live Mic Waveform & Voice Toggle */}
-        <VoiceIndicator
-          voiceEnabled={settings.voice_enabled}
-          sttEngine={settings.stt_engine}
-          pausedForTts={settings.voice_conversation_mode && isSpeaking}
-          speaking={isSpeaking}
-          onToggleMute={(next) => void handleToggleVoice(next)}
-          onTranscript={handleVoiceTranscript}
-        />
+        {/* 3. Monochrome Mic Icon Button */}
+        <div className="gl-minimal-mic shrink-0">
+          <VoiceIndicator
+            voiceEnabled={settings.voice_enabled}
+            sttEngine={settings.stt_engine}
+            pausedForTts={settings.voice_conversation_mode && isSpeaking}
+            speaking={isSpeaking}
+            onToggleMute={(next) => void handleToggleVoice(next)}
+            onTranscript={handleVoiceTranscript}
+          />
+        </div>
 
-        {/* 5. Live Call Toggle */}
+        {/* 4. Clean Live Text Button */}
         <button
           type="button"
           onClick={() => void handleToggleLiveCall()}
           disabled={livePending}
           aria-pressed={isLiveActive}
-          aria-label={isLiveActive ? "End live guidance call" : "Start live guidance call"}
+          aria-label={
+            isLiveActive
+              ? "End live guidance session"
+              : "Start live guidance session"
+          }
           title={
             isLiveActive
               ? "End live continuous guidance session"
               : "Start continuous live screen-guiding session"
           }
           data-testid="live-call-toggle"
-          className={`shrink-0 flex items-center gap-1.5 h-8 px-2.5 rounded-full text-[11.5px] font-semibold border transition-all focus:outline-none focus:ring-1 focus:ring-[#38BDF8] ${
+          className={`shrink-0 flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-medium border transition-colors focus:outline-none focus:ring-1 focus:ring-white/25 ${
             isLiveActive
-              ? "bg-emerald-500/20 text-emerald-300 border-emerald-400/45 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-400/45"
-              : "bg-white/[0.05] text-[#E4E4E7] border-white/10 hover:bg-[#38BDF8]/15 hover:text-[#38BDF8] hover:border-[#38BDF8]/40"
+              ? "bg-white/[0.09] text-[#F4F4F5] border-white/[0.14]"
+              : "bg-transparent text-[#A1A1AA] border-transparent hover:text-[#F4F4F5] hover:bg-white/[0.05]"
           }`}
         >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              livePending
-                ? "bg-amber-400 animate-ping"
-                : isLiveActive
-                  ? "bg-emerald-400 animate-pulse"
-                  : "bg-emerald-400/75"
-            }`}
-            aria-hidden="true"
-          />
-          <span>{isLiveActive ? "End Call" : "Live Call"}</span>
+          {(isLiveActive || livePending) && (
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                livePending ? "bg-[#A1A1AA] animate-pulse" : "bg-[#F4F4F5]"
+              }`}
+              aria-hidden="true"
+            />
+          )}
+          <span>Live</span>
         </button>
 
-        {/* 6. Screen Day Live Dot Toggle */}
+        {/* 5. Clean Day Toggle */}
         <button
           type="button"
           onClick={() => void handleToggleScreenday()}
@@ -1018,162 +966,62 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
           }
           title={
             screendayActive
-              ? "Screen Day recording active (click to pause)"
-              : "Record My Day (Screen Day) off (click to enable)"
+              ? "Screen Day active (click to pause)"
+              : "Screen Day off (click to enable)"
           }
           data-testid="screenday-toggle"
-          className={`shrink-0 flex items-center gap-1.5 h-8 px-2.5 rounded-full text-[11.5px] font-semibold border transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8] ${
+          className={`shrink-0 flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-medium border transition-colors focus:outline-none focus:ring-1 focus:ring-white/25 ${
             screendayActive
-              ? "bg-rose-500/15 text-rose-200 border-rose-500/40 hover:bg-rose-500/25"
-              : "bg-white/[0.04] text-[#A1A1AA] border-white/10 hover:text-[#F4F4F5] hover:bg-white/10"
+              ? "bg-white/[0.09] text-[#F4F4F5] border-white/[0.14]"
+              : "bg-transparent text-[#A1A1AA] border-transparent hover:text-[#F4F4F5] hover:bg-white/[0.05]"
           }`}
         >
-          <span
-            data-testid="screenday-live-dot"
-            className={`w-2 h-2 rounded-full ${
-              screendayPulse
-                ? "bg-rose-300 scale-125"
-                : screendayActive
-                  ? "bg-rose-400 animate-pulse"
-                  : "bg-zinc-500"
-            }`}
-            aria-hidden="true"
-          />
+          {screendayActive && (
+            <span
+              data-testid="screenday-live-dot"
+              className={`w-1.5 h-1.5 rounded-full bg-[#F4F4F5] transition-transform ${
+                screendayPulse ? "scale-125" : ""
+              }`}
+              aria-hidden="true"
+            />
+          )}
           <span>Day</span>
         </button>
 
-        {/* 7. Speaker TTS Mute Toggle */}
-        <button
-          type="button"
-          onClick={() => void handleToggleTts()}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            void handleOpenControlCenter("companions");
-          }}
-          aria-label={
-            settings.tts_enabled
-              ? "Mute spoken guidance"
-              : "Enable spoken guidance"
-          }
-          aria-pressed={settings.tts_enabled}
-          title={
-            isSpeaking
-              ? "Speaking — click to stop & mute"
-              : settings.tts_enabled
-                ? "Voice guidance on (click to mute)"
-                : "Voice guidance muted (click to enable)"
-          }
-          data-testid="tts-mute-toggle"
-          className={`relative shrink-0 flex items-center justify-center w-8 h-8 rounded-full border transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8] ${
-            settings.tts_enabled
-              ? "text-[#38BDF8] bg-[#38BDF8]/15 border-[#38BDF8]/35 hover:bg-[#38BDF8]/25"
-              : "text-[#A1A1AA] bg-white/[0.04] border-white/10 hover:text-[#F4F4F5] hover:bg-white/10"
-          }`}
-        >
-          {isSpeaking && (
-            <span
-              data-testid="tts-speaking-pulse"
-              className="absolute inset-0 rounded-full ring-1 ring-[#38BDF8]/70 animate-ping pointer-events-none"
-            />
-          )}
-          {settings.tts_enabled ? (
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-            </svg>
-          ) : (
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-              <line x1="22" x2="16" y1="9" y2="15" />
-              <line x1="16" x2="22" y1="9" y2="15" />
-            </svg>
-          )}
-        </button>
-
-        {/* 8. Control Center Window Button */}
+        {/* 6. Clean Control Center Gear/Sliders Icon Button */}
         <button
           type="button"
           onClick={() => void handleOpenControlCenter("overview")}
           aria-label="Open Control Center"
           data-testid="open-settings-btn"
           title="Open GuideLens Control Center"
-          className="shrink-0 flex items-center gap-1.5 h-8 px-3 rounded-full text-[11.5px] font-semibold bg-white/[0.08] text-[#F4F4F5] border border-white/15 hover:bg-white/15 hover:border-[#38BDF8]/40 transition-colors focus:outline-none focus:ring-1 focus:ring-[#38BDF8]"
+          className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/[0.06] transition-colors focus:outline-none focus:ring-1 focus:ring-white/25"
         >
           <svg
-            width="13"
-            height="13"
+            width="15"
+            height="15"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2"
+            strokeWidth="1.8"
             strokeLinecap="round"
             strokeLinejoin="round"
             aria-hidden="true"
           >
-            <rect x="3" y="3" width="7" height="7" rx="1.5" />
-            <rect x="14" y="3" width="7" height="7" rx="1.5" />
-            <rect x="3" y="14" width="7" height="7" rx="1.5" />
-            <rect x="14" y="14" width="7" height="7" rx="1.5" />
+            <line x1="4" y1="21" x2="4" y2="14" />
+            <line x1="4" y1="10" x2="4" y2="3" />
+            <line x1="12" y1="21" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12" y2="3" />
+            <line x1="20" y1="21" x2="20" y2="16" />
+            <line x1="20" y1="12" x2="20" y2="3" />
+            <line x1="1" y1="14" x2="7" y2="14" />
+            <line x1="9" y1="8" x2="15" y2="8" />
+            <line x1="17" y1="16" x2="23" y2="16" />
           </svg>
-          <span>Control Center</span>
         </button>
       </div>
 
-      {/* Live Turn Status + Spoken Whisper Strip when Live Session has no active ResponseBlock */}
-      {hasLiveStrip && liveSession && (
-        <div
-          data-testid="live-session-strip"
-          className={`${barSurfaceClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-2.5 flex items-center justify-between gap-3 text-[#F4F4F5] shadow-[0_18px_48px_rgba(0,0,0,0.65)]`}
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/35 text-[11px] font-semibold text-emerald-300">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              {formatLiveStatusLabel(liveSession.status)}
-              {liveSession.turn_count > 0
-                ? ` · Turn ${liveSession.turn_count}`
-                : ""}
-            </span>
-            {whisperText && (
-              <span
-                data-testid="live-whisper-text"
-                className="text-[12.5px] text-[#E4E4E7] truncate"
-              >
-                {whisperText}
-              </span>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleCloseResponse()}
-            className="shrink-0 px-2.5 py-0.5 rounded-full text-[11.5px] bg-white/5 border border-white/10 text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/10"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {/* Compact Response Block Expanding Downward */}
+      {/* Single Calm Monochrome Response Block */}
       <ResponseBlock
         loading={loading}
         brainStatus={brainStatus}
@@ -1191,6 +1039,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
             ? `Live · Turn ${Math.max(1, liveSession.turn_count || stepIndex + 1)}`
             : null
         }
+        liveStatusText={liveStatusLine}
         onReplaySpeech={() => {
           if (currentStep) {
             speakStep(currentStep, stepIndex, totalSteps, mode);

@@ -344,7 +344,8 @@ describe("SettingsView", () => {
       "Groq key saved in Windows Credential Manager.",
     );
 
-    // Ollama pull + progress event
+    // Local & Routing sub-tab: Ollama pull + progress event
+    await user.click(screen.getByTestId("brains-subtab-local"));
     await user.click(screen.getByTestId("ollama-pull-btn"));
     expect(mocks.invoke).toHaveBeenCalledWith("ollama_pull", {
       model: "qwen2.5vl:3b",
@@ -358,7 +359,8 @@ describe("SettingsView", () => {
     });
     expect(screen.getByTestId("ollama-pull-progress")).toHaveTextContent("64%");
 
-    // Detected Agent CLI
+    // Subscription CLIs sub-tab: Detected Agent CLI
+    await user.click(screen.getByTestId("brains-subtab-clis"));
     expect(screen.getByTestId("agent-cli-list")).toHaveTextContent("Detected");
   });
 
@@ -366,8 +368,8 @@ describe("SettingsView", () => {
     const user = userEvent.setup();
     render(<SettingsView initialSettings={{ ...DEFAULT_SETTINGS, onboarding_complete: true }} />);
 
-    // Account tab
-    await user.click(screen.getByTestId("tab-account"));
+    // Settings / Privacy tab (contains Cloud Account & Pro Billing)
+    await user.click(screen.getByTestId("tab-privacy"));
     expect(await screen.findByTestId("usage-count-text")).toHaveTextContent(
       "42 / 1500 requests",
     );
@@ -383,8 +385,9 @@ describe("SettingsView", () => {
       );
     });
 
-    // History tab
-    await user.click(screen.getByTestId("tab-history"));
+    // Daily Diary tab -> Guided Session History collapsible section
+    await user.click(screen.getByTestId("tab-diary"));
+    await user.click(screen.getByTestId("toggle-guided-history-btn"));
     const sessionBtn = await screen.findByTestId("history-item-sess-100");
     await user.click(sessionBtn);
 

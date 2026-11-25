@@ -38,7 +38,7 @@ export interface WanderWaypoint {
 export interface BubblePlacement {
   x: number;
   y: number;
-  side: "left" | "right" | "above";
+  side: "left" | "right" | "above" | "below";
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -167,8 +167,8 @@ export function computeLandingSpot(
 }
 
 /**
- * Computes one frame along a smooth gravity-arc parabolic leap from `start` to `end`.
- * Includes subtle stretch in mid-air and gentle squash upon landing.
+ * Computes one frame along a silky easeOutQuart glide from `start` to `end`
+ * with a gentle <=16px arc lift, <=2deg lean, and subtle 1.03x settle.
  */
 export function stepParabolicArc(
   start: Point2D,
@@ -181,16 +181,16 @@ export function stepParabolicArc(
   const dy = end.y - start.y;
   const dist = Math.hypot(dx, dy);
   const arcHeight =
-    options.arcHeight ?? Math.max(44, Math.min(180, dist * 0.28 + 32));
+    options.arcHeight ??
+    (dist < 4 ? 0 : Math.min(16, Math.max(4, dist * 0.04)));
 
-  // Smooth ease-in-out horizontal/baseline interpolation
-  const eased =
-    t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  // Silky easeOutQuart trajectory
+  const eased = 1 - Math.pow(1 - t, 4);
 
   const baseX = start.x + dx * eased;
   const baseY = start.y + dy * eased;
 
-  // Parabolic upward arc: 4 * h * t * (1 - t) peaks at t = 0.5
+  // Gentle arc lift peaking at mid-flight (max 16px)
   const arcLift = 4 * arcHeight * t * (1 - t);
   const y = baseY - arcLift;
 
@@ -199,26 +199,16 @@ export function stepParabolicArc(
   let rotationDeg = 0;
 
   if (t > 0 && t < 1) {
-    if (t < 0.14) {
-      // Takeoff spring
-      const k = Math.sin((t / 0.14) * Math.PI);
-      scaleX = 1 - 0.06 * k;
-      scaleY = 1 + 0.08 * k;
-    } else if (t < 0.85) {
-      // Mid-air extension
-      const midLiftFactor = 4 * t * (1 - t);
-      scaleX = 1 - 0.04 * midLiftFactor;
-      scaleY = 1 + 0.05 * midLiftFactor;
-    } else {
-      // Landing squash cushioning
-      const landT = (t - 0.85) / 0.15;
-      const squash = Math.sin(landT * Math.PI);
-      scaleX = 1 + 0.14 * squash;
-      scaleY = 1 - 0.12 * squash;
+    // Subtle 1.03x settle cushion near landing, zero cartoony squash
+    if (t >= 0.78) {
+      const landT = (t - 0.78) / 0.22;
+      const settle = Math.sin(landT * Math.PI);
+      scaleX = 1 + 0.03 * settle;
+      scaleY = 1 + 0.03 * settle;
     }
 
     const dir = Math.abs(dx) < 2 ? 0 : dx > 0 ? 1 : -1;
-    rotationDeg = dir * (1 - 2 * t) * -7;
+    rotationDeg = dir * Math.sin(t * Math.PI) * 2;
   }
 
   return {
@@ -240,9 +230,22 @@ function hashString(input: string): number {
   return Math.abs(hash);
 }
 
+const CALM_PERCH_OFFSETS: ReadonlyArray<{
+  dx: number;
+  dy: number;
+  emotion: WanderWaypoint["emotion"];
+}> = [
+  { dx: 0, dy: 0, emotion: "idle" },
+  { dx: -16, dy: -4, emotion: "idle" },
+  { dx: -32, dy: -2, emotion: "curious" },
+  { dx: -18, dy: -8, emotion: "idle" },
+  { dx: -6, dy: -3, emotion: "peeking" },
+  { dx: -24, dy: 0, emotion: "idle" },
+];
+
 /**
- * Generates gentle screen-edge peeking and taskbar-walking waypoints when
- * Screen Day or wander mode is active so the companion never blocks the center.
+ * Keeps the companion peacefully in a small bottom-right resting zone just above
+ * the taskbar, drifting subtly ~24-36px with zero edge-to-edge teleporting.
  */
 export function computeWanderWaypoint(
   viewport: ViewportBounds,
@@ -252,129 +255,175 @@ export function computeWanderWaypoint(
 ): WanderWaypoint {
   const safeW = Math.max(companionSize + 16, viewport.w || 1920);
   const safeH = Math.max(companionSize + 64, viewport.h || 1080);
-  const minX = 6;
-  const maxX = Math.max(minX, safeW - companionSize - 6);
-  const taskbarY = clamp(safeH - companionSize - 46, 12, safeH - companionSize - 8);
+  const minX = 12;
+  const maxX = Math.max(minX, safeW - companionSize - 12);
+  const taskbarY = clamp(
+    safeH - companionSize - 56,
+    12,
+    safeH - companionSize - 12,
+  );
+  const baseX = clamp(safeW - companionSize - 36, minX, maxX);
 
-  const appBias = activeApp ? hashString(activeApp.toLowerCase()) % 4 : 0;
+  const appBias = activeApp ? hashString(activeApp.toLowerCase()) % 3 : 0;
   const normalizedTick = Math.max(0, Math.floor(tick));
-  const phase = (normalizedTick + appBias) % 8;
+  const step =
+    CALM_PERCH_OFFSETS[(normalizedTick + appBias) % CALM_PERCH_OFFSETS.length];
 
-  switch (phase) {
-    case 0:
-    case 1: {
-      // Gentle walk along right side of taskbar
-      const walkX = clamp(
-        safeW - companionSize - 110 - phase * 65,
-        minX,
-        maxX,
-      );
-      return {
-        x: Math.round(walkX),
-        y: Math.round(taskbarY),
-        facing: "left",
-        mode: "taskbar_walk",
-        emotion: phase === 0 ? "walking" : "idle",
-      };
-    }
-    case 2:
-      // Peek curiously from right screen edge
-      return {
-        x: Math.round(maxX),
-        y: Math.round(clamp(safeH * 0.42, 48, taskbarY - 24)),
-        facing: "left",
-        mode: "peek_right",
-        emotion: "peeking",
-      };
-    case 3:
-      // Quiet perch near bottom-right corner
-      return {
-        x: Math.round(clamp(safeW - companionSize - 32, minX, maxX)),
-        y: Math.round(taskbarY),
-        facing: "left",
-        mode: "corner_perch",
-        emotion: "curious",
-      };
-    case 4:
-    case 5: {
-      // Gentle walk along left-center taskbar
-      const walkX = clamp(84 + (phase - 4) * 72, minX, maxX);
-      return {
-        x: Math.round(walkX),
-        y: Math.round(taskbarY),
-        facing: "right",
-        mode: "taskbar_walk",
-        emotion: phase === 4 ? "walking" : "idle",
-      };
-    }
-    case 6:
-      // Peek curiously from left screen edge
-      return {
-        x: Math.round(minX),
-        y: Math.round(clamp(safeH * 0.46, 48, taskbarY - 24)),
-        facing: "right",
-        mode: "peek_left",
-        emotion: "peeking",
-      };
-    case 7:
-    default:
-      // Bottom-left quiet perch
-      return {
-        x: Math.round(clamp(32, minX, maxX)),
-        y: Math.round(taskbarY),
-        facing: "right",
-        mode: "corner_perch",
-        emotion: "idle",
-      };
-  }
+  return {
+    x: Math.round(clamp(baseX + step.dx, minX, maxX)),
+    y: Math.round(clamp(taskbarY + step.dy, 12, safeH - companionSize - 12)),
+    facing: "left",
+    mode: "corner_perch",
+    emotion: step.emotion,
+  };
 }
 
 /**
- * Places the companion speech bubble cleanly beside or above the companion
- * without clipping outside the viewport.
+ * Places the companion speech bubble cleanly beside, above, or below the companion
+ * without clipping outside the viewport or covering `targetRect` / its step badge.
  */
 export function computeBubblePosition(
   companionPos: Point2D,
   companionSize: number,
   bubbleSize: { w: number; h: number },
   viewport: ViewportBounds,
+  targetRect: RectPx | null = null,
 ): BubblePlacement {
   const safeW = Math.max(bubbleSize.w + 24, viewport.w || 1920);
   const safeH = Math.max(bubbleSize.h + 24, viewport.h || 1080);
   const pad = 12;
   const gap = 10;
+  const maxX = Math.max(pad, safeW - bubbleSize.w - pad);
+  const maxY = Math.max(pad, safeH - bubbleSize.h - pad);
 
   const rightX = companionPos.x + companionSize + gap;
   const leftX = companionPos.x - bubbleSize.w - gap;
-  const verticalY = clamp(
-    companionPos.y - 6,
-    pad,
-    Math.max(pad, safeH - bubbleSize.h - pad),
-  );
-
+  const verticalY = clamp(companionPos.y - 6, pad, maxY);
   const compCx = companionPos.x + companionSize / 2;
-  const preferLeft = compCx > safeW * 0.56;
+  const centeredX = clamp(compCx - bubbleSize.w / 2, pad, maxX);
 
-  if (preferLeft && leftX >= pad) {
-    return { x: Math.round(leftX), y: Math.round(verticalY), side: "left" };
-  }
-  if (!preferLeft && rightX + bubbleSize.w <= safeW - pad) {
-    return { x: Math.round(rightX), y: Math.round(verticalY), side: "right" };
-  }
-  if (leftX >= pad) {
-    return { x: Math.round(leftX), y: Math.round(verticalY), side: "left" };
-  }
-  if (rightX + bubbleSize.w <= safeW - pad) {
-    return { x: Math.round(rightX), y: Math.round(verticalY), side: "right" };
-  }
+  const companionBox: RectPx = {
+    x: companionPos.x,
+    y: companionPos.y,
+    w: companionSize,
+    h: companionSize,
+  };
 
-  return {
-    x: Math.round(
-      clamp(compCx - bubbleSize.w / 2, pad, safeW - bubbleSize.w - pad),
-    ),
-    y: Math.round(
-      clamp(companionPos.y - bubbleSize.h - gap, pad, safeH - bubbleSize.h - pad),
-    ),
+  // Pad targetRect to protect both the highlight box and its step badge.
+  const protectedRect: RectPx | null = targetRect
+    ? (() => {
+        const badgeAbove = targetRect.y >= 34;
+        const topPad = badgeAbove ? 30 : 6;
+        const bottomPad = badgeAbove ? 6 : 30;
+        return {
+          x: targetRect.x - 6,
+          y: targetRect.y - topPad,
+          w: targetRect.w + 12,
+          h: targetRect.h + topPad + bottomPad,
+        };
+      })()
+    : null;
+
+  const leftCand: BubblePlacement = {
+    x: Math.round(leftX),
+    y: Math.round(verticalY),
+    side: "left",
+  };
+  const rightCand: BubblePlacement = {
+    x: Math.round(rightX),
+    y: Math.round(verticalY),
+    side: "right",
+  };
+  const aboveCand: BubblePlacement = {
+    x: Math.round(centeredX),
+    y: Math.round(companionPos.y - bubbleSize.h - gap),
     side: "above",
   };
+  const belowCand: BubblePlacement = {
+    x: Math.round(centeredX),
+    y: Math.round(companionPos.y + companionSize + gap),
+    side: "below",
+  };
+
+  const candidates: BubblePlacement[] = [];
+  if (targetRect && protectedRect) {
+    const targetCx = targetRect.x + targetRect.w / 2;
+    const aboveTarget: BubblePlacement = {
+      x: Math.round(centeredX),
+      y: Math.round(protectedRect.y - bubbleSize.h - gap),
+      side: "above",
+    };
+    const belowTarget: BubblePlacement = {
+      x: Math.round(centeredX),
+      y: Math.round(protectedRect.y + protectedRect.h + gap),
+      side: "below",
+    };
+    if (compCx <= targetCx) {
+      candidates.push(
+        leftCand,
+        aboveCand,
+        belowCand,
+        aboveTarget,
+        belowTarget,
+        rightCand,
+      );
+    } else {
+      candidates.push(
+        rightCand,
+        aboveCand,
+        belowCand,
+        aboveTarget,
+        belowTarget,
+        leftCand,
+      );
+    }
+  } else {
+    const preferLeft = compCx > safeW * 0.56;
+    if (preferLeft) {
+      candidates.push(leftCand, rightCand, aboveCand, belowCand);
+    } else {
+      candidates.push(rightCand, leftCand, aboveCand, belowCand);
+    }
+  }
+
+  const fitsCleanly = (cand: BubblePlacement): boolean => {
+    if (cand.x < pad || cand.x > maxX || cand.y < pad || cand.y > maxY) {
+      return false;
+    }
+    const bubbleBox: RectPx = {
+      x: cand.x,
+      y: cand.y,
+      w: bubbleSize.w,
+      h: bubbleSize.h,
+    };
+    if (protectedRect && rectsOverlap(bubbleBox, protectedRect)) {
+      return false;
+    }
+    if (protectedRect && rectsOverlap(bubbleBox, companionBox)) {
+      return false;
+    }
+    return true;
+  };
+
+  for (const cand of candidates) {
+    if (fitsCleanly(cand)) {
+      return cand;
+    }
+  }
+
+  // Fallback: stay inside viewport and avoid targetRect if possible
+  const clampedAbove: BubblePlacement = {
+    x: Math.round(centeredX),
+    y: Math.round(
+      clamp(
+        protectedRect
+          ? protectedRect.y + protectedRect.h + gap
+          : companionPos.y - bubbleSize.h - gap,
+        pad,
+        maxY,
+      ),
+    ),
+    side: protectedRect ? "below" : "above",
+  };
+  return clampedAbove;
 }

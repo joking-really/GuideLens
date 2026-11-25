@@ -15,7 +15,6 @@ import type {
 import {
   CheckIcon,
   CopyIcon,
-  GraphIcon,
   MaximizeIcon,
   RefreshIcon,
   SearchIcon,
@@ -31,36 +30,6 @@ interface PositionedNode {
   tier: number;
 }
 
-const NODE_COLORS: Record<
-  string,
-  { fill: string; stroke: string; badge: string; label: string }
-> = {
-  app: {
-    fill: "#0E293B",
-    stroke: "#38BDF8",
-    badge: "bg-sky-400/15 text-sky-300 border-sky-400/35",
-    label: "App",
-  },
-  screen: {
-    fill: "#1E1F3B",
-    stroke: "#818CF8",
-    badge: "bg-indigo-400/15 text-indigo-300 border-indigo-400/35",
-    label: "Screen",
-  },
-  control: {
-    fill: "#0E2E24",
-    stroke: "#22C55E",
-    badge: "bg-emerald-400/15 text-emerald-300 border-emerald-400/35",
-    label: "Control",
-  },
-  intent: {
-    fill: "#30210D",
-    stroke: "#F59E0B",
-    badge: "bg-amber-400/15 text-amber-300 border-amber-400/35",
-    label: "Intent",
-  },
-};
-
 function tierForType(nodeType: string): number {
   const t = nodeType.toLowerCase();
   if (t === "app") return 0;
@@ -69,18 +38,7 @@ function tierForType(nodeType: string): number {
   return 3;
 }
 
-function colorForType(nodeType: string) {
-  return (
-    NODE_COLORS[nodeType.toLowerCase()] ?? {
-      fill: "#1B202C",
-      stroke: "#94A3B8",
-      badge: "bg-white/10 text-zinc-300 border-white/20",
-      label: nodeType,
-    }
-  );
-}
-
-function truncateLabel(text: string, maxLen = 22): string {
+function truncateLabel(text: string, maxLen = 20): string {
   if (text.length <= maxLen) return text;
   return `${text.slice(0, maxLen - 1)}…`;
 }
@@ -111,7 +69,6 @@ export const KnowledgeGraphTab: React.FC = () => {
   const [loadingMarkdown, setLoadingMarkdown] = useState(false);
   const [copiedMd, setCopiedMd] = useState(false);
 
-  // SVG pan & zoom
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{
@@ -218,7 +175,7 @@ export const KnowledgeGraphTab: React.FC = () => {
     const colX = [110, 310, 520, 730];
     const maxRows = Math.max(1, ...buckets.map((b) => b.length));
     const rowSpacing = 74;
-    const height = Math.max(380, maxRows * rowSpacing + 80);
+    const height = Math.max(360, maxRows * rowSpacing + 80);
 
     const positioned: PositionedNode[] = [];
     const byId = new Map<string, PositionedNode>();
@@ -255,19 +212,19 @@ export const KnowledgeGraphTab: React.FC = () => {
 
   return (
     <div className="space-y-4" data-testid="panel-graph">
-      {/* Filter & Search Header */}
-      <section className="rounded-2xl bg-[#11141D]/90 border border-white/[0.08] p-4 flex flex-wrap items-center justify-between gap-3">
+      {/* Filter & Search Bar */}
+      <section className="rounded-xl bg-[#111317] border border-white/[0.07] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="relative">
-            <SearchIcon className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <SearchIcon className="w-3.5 h-3.5 text-[#5C606A] absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               aria-label="Filter Knowledge Graph"
               data-testid="kg-search-input"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search nodes, controls, apps…"
-              className="pl-8 pr-3 py-1.5 rounded-xl bg-[#090B10] border border-white/15 text-[12.5px] text-zinc-100 placeholder-zinc-500 w-56 focus:outline-none focus:border-sky-400"
+              placeholder="Search nodes or apps…"
+              className="pl-8 pr-3 py-1.5 rounded-lg bg-[#0A0B0D] border border-white/[0.08] text-[12.5px] text-[#F4F4F5] placeholder-[#5C606A] w-52 focus:outline-none focus:border-white/25"
             />
           </div>
 
@@ -276,7 +233,7 @@ export const KnowledgeGraphTab: React.FC = () => {
             data-testid="kg-app-filter"
             value={appFilter}
             onChange={(e) => setAppFilter(e.target.value)}
-            className="rounded-xl bg-[#090B10] border border-white/15 px-3 py-1.5 text-[12.5px] text-zinc-100"
+            className="rounded-lg bg-[#0A0B0D] border border-white/[0.08] px-3 py-1.5 text-[12.5px] text-[#F4F4F5]"
           >
             <option value="">All Apps</option>
             {uniqueApps.map((app) => (
@@ -286,17 +243,17 @@ export const KnowledgeGraphTab: React.FC = () => {
             ))}
           </select>
 
-          <div className="flex items-center gap-1 bg-[#090B10] p-1 rounded-xl border border-white/10">
+          <div className="flex items-center gap-0.5 bg-[#0A0B0D] p-1 rounded-lg border border-white/[0.07]">
             {(["all", "app", "screen", "control", "intent"] as const).map(
               (kind) => (
                 <button
                   key={kind}
                   type="button"
                   onClick={() => setTypeFilter(kind)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium capitalize transition-colors ${
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium capitalize transition-colors ${
                     typeFilter === kind
-                      ? "bg-sky-400 text-slate-950 font-semibold"
-                      : "text-zinc-400 hover:text-zinc-200"
+                      ? "bg-[#F4F4F5] text-[#0A0B0D]"
+                      : "text-[#8E929B] hover:text-[#F4F4F5]"
                   }`}
                 >
                   {kind}
@@ -311,15 +268,15 @@ export const KnowledgeGraphTab: React.FC = () => {
             <button
               type="button"
               onClick={() => void handleOpenMarkdown(graph.master_md_path!)}
-              className="px-3 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 text-[12px] text-sky-300 font-medium"
+              className="px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-[12px] text-[#E4E4E7] font-medium transition-colors"
             >
-              Master knowledge-graph.md
+              knowledge-graph.md
             </button>
           )}
           <button
             type="button"
             onClick={() => void loadGraphData(appFilter)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 text-[12px] text-zinc-200"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-[12px] text-[#E4E4E7] transition-colors"
           >
             <RefreshIcon className="w-3.5 h-3.5" />
             Refresh
@@ -327,18 +284,16 @@ export const KnowledgeGraphTab: React.FC = () => {
         </div>
       </section>
 
-      {/* Main Split: Interactive SVG Graph + Session .graph.md Viewer */}
+      {/* Main Split: Monochrome SVG Node Graph + .graph.md Reader */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left: SVG Pan/Zoom Explorer + Node Inspector */}
-        <section className="lg:col-span-7 rounded-2xl bg-[#11141D]/90 border border-white/[0.08] p-4 flex flex-col gap-3">
+        <section className="lg:col-span-7 rounded-xl bg-[#111317] border border-white/[0.07] p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <GraphIcon className="w-4 h-4 text-sky-300" />
-              <h2 className="text-[13.5px] font-semibold text-zinc-100">
-                App → Screen → Control → Intent Graph
+              <h2 className="text-[13px] font-semibold text-[#F4F4F5]">
+                Learned Path Graph
               </h2>
-              <span className="text-[11px] font-mono text-zinc-400">
-                ({filteredNodes.length} nodes · {filteredEdges.length} edges)
+              <span className="text-[11px] font-mono text-[#5C606A]">
+                {filteredNodes.length}n · {filteredEdges.length}e
               </span>
             </div>
 
@@ -347,18 +302,18 @@ export const KnowledgeGraphTab: React.FC = () => {
                 type="button"
                 aria-label="Zoom Out Graph"
                 onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.15).toFixed(2)))}
-                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300"
+                className="p-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[#8E929B] hover:text-[#F4F4F5]"
               >
                 <ZoomOutIcon className="w-3.5 h-3.5" />
               </button>
-              <span className="text-[11px] font-mono text-zinc-400 px-1.5">
+              <span className="text-[11px] font-mono text-[#5C606A] px-1.5">
                 {Math.round(zoom * 100)}%
               </span>
               <button
                 type="button"
                 aria-label="Zoom In Graph"
                 onClick={() => setZoom((z) => Math.min(2.4, +(z + 0.15).toFixed(2)))}
-                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300"
+                className="p-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[#8E929B] hover:text-[#F4F4F5]"
               >
                 <ZoomInIcon className="w-3.5 h-3.5" />
               </button>
@@ -369,13 +324,14 @@ export const KnowledgeGraphTab: React.FC = () => {
                   setZoom(1);
                   setPan({ x: 0, y: 0 });
                 }}
-                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300"
+                className="p-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[#8E929B] hover:text-[#F4F4F5]"
               >
                 <MaximizeIcon className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
 
+          {/* Monochrome SVG Stage */}
           <div
             data-testid="kg-svg-stage"
             onPointerDown={(e) => {
@@ -401,17 +357,17 @@ export const KnowledgeGraphTab: React.FC = () => {
             onPointerLeave={() => {
               dragRef.current.active = false;
             }}
-            className="relative h-[340px] rounded-xl bg-[#090B10] border border-white/10 overflow-hidden cursor-grab active:cursor-grabbing select-none"
+            className="relative h-[330px] rounded-lg bg-[#0A0B0D] border border-white/[0.07] overflow-hidden cursor-grab active:cursor-grabbing select-none"
           >
             {filteredNodes.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-6">
-                <p className="text-[13px] font-medium text-zinc-300">
+                <p className="text-[13px] font-medium text-[#8E929B]">
                   {loading
                     ? "Loading knowledge graph…"
                     : "No learned UI nodes match the current filter."}
                 </p>
-                <p className="text-[11.5px] text-zinc-500 mt-1">
-                  GuideLens automatically records verified App → Screen → Control → Intent paths as you run Live Sessions.
+                <p className="text-[11.5px] text-[#5C606A] mt-1">
+                  Verified App → Screen → Control → Intent paths are recorded automatically during Live Sessions.
                 </p>
               </div>
             ) : (
@@ -425,15 +381,14 @@ export const KnowledgeGraphTab: React.FC = () => {
                     viewBox="0 0 10 10"
                     refX="9"
                     refY="5"
-                    markerWidth="6"
-                    markerHeight="6"
+                    markerWidth="5"
+                    markerHeight="5"
                     orient="auto-start-reverse"
                   >
-                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748B" />
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="rgba(255,255,255,0.28)" />
                   </marker>
                 </defs>
 
-                {/* Column Tier Headers */}
                 <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
                   {(["App", "Screen", "Control", "Intent"] as const).map(
                     (colLabel, idx) => (
@@ -442,8 +397,8 @@ export const KnowledgeGraphTab: React.FC = () => {
                         x={[110, 310, 520, 730][idx]}
                         y={24}
                         textAnchor="middle"
-                        fill="#64748B"
-                        fontSize="11"
+                        fill="#5C606A"
+                        fontSize="10.5"
                         fontWeight="600"
                       >
                         {colLabel.toUpperCase()}
@@ -451,7 +406,7 @@ export const KnowledgeGraphTab: React.FC = () => {
                     ),
                   )}
 
-                  {/* Edges */}
+                  {/* Hairline Monochrome Edges */}
                   {filteredEdges.map((edge) => {
                     const from = layout.byId.get(edge.from_node);
                     const to = layout.byId.get(edge.to_node);
@@ -469,9 +424,12 @@ export const KnowledgeGraphTab: React.FC = () => {
                         <path
                           d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
                           fill="none"
-                          stroke={isHighlighted ? "#38BDF8" : "#334155"}
-                          strokeWidth={isHighlighted ? 2.2 : 1.4}
-                          strokeOpacity={isHighlighted ? 0.95 : 0.7}
+                          stroke={
+                            isHighlighted
+                              ? "rgba(244,244,245,0.75)"
+                              : "rgba(255,255,255,0.14)"
+                          }
+                          strokeWidth={isHighlighted ? 1.6 : 1}
                           markerEnd="url(#kg-arrow)"
                         />
                         {isHighlighted && edge.intent && (
@@ -479,7 +437,7 @@ export const KnowledgeGraphTab: React.FC = () => {
                             x={mx}
                             y={(y1 + y2) / 2 - 6}
                             textAnchor="middle"
-                            fill="#BAE6FD"
+                            fill="#E4E4E7"
                             fontSize="10"
                           >
                             {truncateLabel(edge.intent, 24)} (×{edge.success_count})
@@ -489,9 +447,8 @@ export const KnowledgeGraphTab: React.FC = () => {
                     );
                   })}
 
-                  {/* Nodes */}
+                  {/* Monochrome Nodes */}
                   {layout.positioned.map(({ node, x, y }) => {
-                    const palette = colorForType(node.node_type);
                     const isSelected = selectedNodeId === node.id;
                     return (
                       <g
@@ -504,29 +461,39 @@ export const KnowledgeGraphTab: React.FC = () => {
                       >
                         <rect
                           x={-68}
-                          y={-22}
+                          y={-21}
                           width={136}
-                          height={44}
-                          rx={10}
-                          fill={palette.fill}
-                          stroke={isSelected ? "#FACC15" : palette.stroke}
-                          strokeWidth={isSelected ? 2.4 : 1.3}
+                          height={42}
+                          rx={8}
+                          fill={isSelected ? "#17191E" : "#111317"}
+                          stroke={
+                            isSelected
+                              ? "#F4F4F5"
+                              : "rgba(255,255,255,0.16)"
+                          }
+                          strokeWidth={isSelected ? 1.6 : 1}
+                        />
+                        <circle
+                          cx={-54}
+                          cy={-4}
+                          r={3}
+                          fill={isSelected ? "#F4F4F5" : "#8E929B"}
                         />
                         <text
-                          x={0}
-                          y={-3}
+                          x={4}
+                          y={-2}
                           textAnchor="middle"
                           fill="#F4F4F5"
                           fontSize="11.5"
-                          fontWeight="600"
+                          fontWeight="500"
                         >
-                          {truncateLabel(node.label, 18)}
+                          {truncateLabel(node.label, 16)}
                         </text>
                         <text
                           x={0}
                           y={13}
                           textAnchor="middle"
-                          fill="#94A3B8"
+                          fill="#5C606A"
                           fontSize="9.5"
                         >
                           {node.node_type} · ×{node.hit_count}
@@ -539,31 +506,27 @@ export const KnowledgeGraphTab: React.FC = () => {
             )}
           </div>
 
-          {/* Selected Node Inspector */}
+          {/* Node Inspector */}
           <div
             data-testid="kg-node-inspector"
-            className="rounded-xl bg-[#090B10]/90 border border-white/[0.08] p-3.5"
+            className="rounded-lg bg-[#0A0B0D] border border-white/[0.07] p-3.5"
           >
             {selectedNode ? (
               <div className="space-y-2.5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10.5px] font-semibold border uppercase ${
-                          colorForType(selectedNode.node_type).badge
-                        }`}
-                      >
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] uppercase font-medium text-[#E4E4E7]">
                         {selectedNode.node_type}
                       </span>
-                      <span className="font-mono text-[11px] text-zinc-400">
+                      <span className="font-mono text-[#8E929B]">
                         {selectedNode.app_exe}
                       </span>
-                      <span className="font-mono text-[11px] text-emerald-300">
-                        ×{selectedNode.hit_count} hits
+                      <span className="font-mono text-[#5C606A]">
+                        ×{selectedNode.hit_count}
                       </span>
                     </div>
-                    <div className="text-[13.5px] font-semibold text-zinc-100 break-words">
+                    <div className="text-[13px] font-semibold text-[#F4F4F5] break-words">
                       {selectedNode.label}
                     </div>
                   </div>
@@ -573,10 +536,10 @@ export const KnowledgeGraphTab: React.FC = () => {
                     data-testid="kg-delete-node-btn"
                     onClick={() => void handleDeleteNode(selectedNode.id)}
                     disabled={deletingId === selectedNode.id}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/35 text-[11.5px] text-rose-300 font-medium shrink-0 disabled:opacity-40"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-[11.5px] text-[#E4E4E7] font-medium shrink-0 disabled:opacity-40 transition-colors"
                   >
                     <TrashIcon className="w-3.5 h-3.5" />
-                    {deletingId === selectedNode.id ? "Deleting…" : "Delete Node"}
+                    {deletingId === selectedNode.id ? "Deleting…" : "Delete"}
                   </button>
                 </div>
 
@@ -585,14 +548,14 @@ export const KnowledgeGraphTab: React.FC = () => {
                     {connectedEdges.map((edge) => (
                       <span
                         key={edge.id}
-                        className="px-2 py-1 rounded-md bg-white/[0.04] border border-white/[0.07] text-[11px] text-zinc-300"
+                        className="px-2 py-1 rounded bg-[#111317] border border-white/[0.07] text-[11px] text-[#8E929B]"
                       >
                         {edge.relation}:{" "}
-                        <strong className="text-sky-300">
+                        <span className="text-[#F4F4F5] font-medium">
                           {edge.intent || edge.control_name || "link"}
-                        </strong>
+                        </span>
                         {edge.shortcut && (
-                          <kbd className="ml-1.5 px-1 rounded bg-white/10 font-mono text-[10px]">
+                          <kbd className="ml-1.5 px-1 rounded bg-white/[0.06] font-mono text-[10px] text-[#E4E4E7]">
                             {edge.shortcut}
                           </kbd>
                         )}
@@ -602,33 +565,33 @@ export const KnowledgeGraphTab: React.FC = () => {
                 )}
               </div>
             ) : (
-              <p className="text-[12px] text-zinc-500">
-                Click any node in the graph to inspect connected UI controls,
-                shortcuts, hit counts, or delete stale memory nodes.
+              <p className="text-[12px] text-[#5C606A]">
+                Select any node in the graph to inspect connected UI controls,
+                shortcuts, or delete stale memory nodes.
               </p>
             )}
           </div>
         </section>
 
-        {/* Right: Session .graph.md Viewer */}
-        <section className="lg:col-span-5 rounded-2xl bg-[#11141D]/90 border border-white/[0.08] p-4 flex flex-col gap-3">
+        {/* Right: .graph.md Reader Pane */}
+        <section className="lg:col-span-5 rounded-xl bg-[#111317] border border-white/[0.07] p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-[13.5px] font-semibold text-zinc-100">
-                Session .graph.md Viewer
+              <h2 className="text-[13px] font-semibold text-[#F4F4F5]">
+                .graph.md Reader
               </h2>
-              <p className="text-[11px] text-zinc-400">
-                Mermaid flowcharts &amp; action traces saved locally per session
+              <p className="text-[11.5px] text-[#8E929B]">
+                Local Mermaid session traces
               </p>
             </div>
-            <span className="text-[11px] font-mono text-zinc-400">
+            <span className="text-[11px] font-mono text-[#5C606A]">
               {sessionList.length} files
             </span>
           </div>
 
           <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
             {sessionList.length === 0 ? (
-              <p className="text-[12px] text-zinc-500 py-2">
+              <p className="text-[12px] text-[#5C606A] py-2">
                 No session `.graph.md` files written yet.
               </p>
             ) : (
@@ -640,21 +603,21 @@ export const KnowledgeGraphTab: React.FC = () => {
                     type="button"
                     data-testid={`session-graph-item-${sess.session_id}`}
                     onClick={() => void handleOpenMarkdown(sess.graph_md_path)}
-                    className={`w-full text-left rounded-xl p-2.5 border transition-colors ${
+                    className={`w-full text-left rounded-lg p-2.5 border transition-colors ${
                       selected
-                        ? "bg-sky-400/15 border-sky-400"
-                        : "bg-[#090B10]/80 border-white/10 hover:bg-white/[0.06]"
+                        ? "bg-[#17191E] border-white/25"
+                        : "bg-[#0A0B0D] border-white/[0.07] hover:bg-white/[0.03]"
                     }`}
                   >
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-mono text-sky-300">
+                      <span className="font-mono text-[#F4F4F5]">
                         {sess.active_app}
                       </span>
-                      <span className="font-mono text-zinc-400">
+                      <span className="font-mono text-[#5C606A]">
                         {sess.day_key} · {sess.node_count}n/{sess.edge_count}e
                       </span>
                     </div>
-                    <div className="text-[12px] font-medium text-zinc-100 truncate mt-0.5">
+                    <div className="text-[12px] font-medium text-[#8E929B] truncate mt-0.5">
                       {sess.goal || sess.graph_md_path}
                     </div>
                   </button>
@@ -663,9 +626,9 @@ export const KnowledgeGraphTab: React.FC = () => {
             )}
           </div>
 
-          <div className="flex-1 min-h-[230px] rounded-xl bg-[#090B10] border border-white/10 flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.08] bg-white/[0.02]">
-              <span className="font-mono text-[11px] text-zinc-400 truncate max-w-[260px]">
+          <div className="flex-1 min-h-[230px] rounded-lg bg-[#0A0B0D] border border-white/[0.07] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.07]">
+              <span className="font-mono text-[11px] text-[#5C606A] truncate max-w-[260px]">
                 {selectedSessionPath || "No .graph.md selected"}
               </span>
               {markdownContent && (
@@ -676,10 +639,10 @@ export const KnowledgeGraphTab: React.FC = () => {
                     setCopiedMd(true);
                     window.setTimeout(() => setCopiedMd(false), 1800);
                   }}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-[11px] text-zinc-200"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/[0.04] hover:bg-white/[0.08] text-[11px] text-[#E4E4E7]"
                 >
                   {copiedMd ? (
-                    <CheckIcon className="w-3 h-3 text-emerald-300" />
+                    <CheckIcon className="w-3 h-3 text-[#F4F4F5]" />
                   ) : (
                     <CopyIcon className="w-3 h-3" />
                   )}
@@ -689,12 +652,12 @@ export const KnowledgeGraphTab: React.FC = () => {
             </div>
             <pre
               data-testid="graph-markdown-viewer"
-              className="flex-1 p-3 overflow-auto gl-mono text-[11.5px] text-zinc-200 leading-relaxed whitespace-pre-wrap"
+              className="flex-1 p-3 overflow-auto gl-mono text-[11.5px] text-[#E4E4E7] leading-relaxed whitespace-pre-wrap"
             >
               {loadingMarkdown
                 ? "Reading markdown graph…"
                 : markdownContent ||
-                  "Select a session graph above or click Master knowledge-graph.md to view the Mermaid state graph and verified UI steps."}
+                  "Select a session graph above or open knowledge-graph.md."}
             </pre>
           </div>
         </section>

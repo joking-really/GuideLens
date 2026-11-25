@@ -11,12 +11,36 @@ static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 static HOOKS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
+/// Extra hit-test padding (physical px) around `rect_px` to accommodate DPI rounding and small icons.
+pub const CLICK_HIT_PADDING_PX: i32 = 28;
+
 /// Pure hit-test function for smart auto-advance when a left-click occurs at `(click_x, click_y)`.
 pub fn should_auto_advance_on_click(target_rect: Option<RectPx>, click_x: i32, click_y: i32) -> bool {
     match target_rect {
-        Some(rect) if rect.w > 0 && rect.h > 0 => rect.contains(click_x, click_y),
+        Some(rect) if rect.w > 0 && rect.h > 0 => {
+            let min_x = rect.x.saturating_sub(CLICK_HIT_PADDING_PX);
+            let max_x = rect.x.saturating_add(rect.w).saturating_add(CLICK_HIT_PADDING_PX);
+            let min_y = rect.y.saturating_sub(CLICK_HIT_PADDING_PX);
+            let max_y = rect.y.saturating_add(rect.h).saturating_add(CLICK_HIT_PADDING_PX);
+            click_x >= min_x && click_x <= max_x && click_y >= min_y && click_y <= max_y
+        }
         _ => false,
     }
+}
+
+/// Pure predicate checking whether the foreground HWND or window title changed after a click outside `rect_px`.
+pub fn has_foreground_window_changed(
+    baseline_hwnd: isize,
+    baseline_title: &str,
+    before_hwnd: isize,
+    before_title: &str,
+    after_hwnd: isize,
+    after_title: &str,
+) -> bool {
+    if after_hwnd != before_hwnd || after_title != before_title {
+        return true;
+    }
+    baseline_hwnd != 0 && (after_hwnd != baseline_hwnd || after_title != baseline_title)
 }
 
 /// Toggles or focuses the floating `bar` window (<100ms) and emits `bar-summoned` when shown/focused.
@@ -143,13 +167,75 @@ fn start_windows_ll_hooks() {
                                 crate::session::notify_user_click(&app_clone, click_x, click_y);
                             });
                         } else if let Some(state) = app.try_state::<OverlayState>() {
-                            if should_auto_advance_on_click(state.current_rect(), click_x, click_y)
-                            {
+                            if state.is_active() {
+                                let hit_target = should_auto_advance_on_click(
+                                    state.current_rect(),
+                                    click_x,
+                                    click_y,
+                                );
+                                let expected_gen = state.guidance_generation();
+                                let (baseline_hwnd, baseline_title) = state.target_window();
                                 let app_clone = app.clone();
+
                                 tauri::async_runtime::spawn(async move {
-                                    // Brief pause (120ms, within <=500ms budget) so target app processes click
-                                    tokio::time::sleep(Duration::from_millis(120)).await;
-                                    let _ = overlay::advance_step(&app_clone);
+                                    if crate::session::is_click_on_own_window(
+                                        &app_clone, click_x, click_y,
+                                    ) {
+                                        return;
+                                    }
+
+                                    if hit_target {
+                                        // Brief pause (110ms) so target app processes click before clearing/advancing
+                                        tokio::time::sleep(Duration::from_millis(110)).await;
+                                        let still_same_step = app_clone
+                                            .try_state::<OverlayState>()
+                                            .is_some_and(|s| {
+                                                s.is_active()
+                                                    && s.guidance_generation() == expected_gen
+                                            });
+                                        if still_same_step {
+                                            let _ = overlay::advance_step(&app_clone);
+                                        }
+                                    } else {
+                                        let before_win = tokio::task::spawn_blocking(
+                                            capture::detect_active_window,
+                                        )
+                                        .await
+                                        .ok();
+                                        tokio::time::sleep(Duration::from_millis(240)).await;
+
+                                        let still_same_step = app_clone
+                                            .try_state::<OverlayState>()
+                                            .is_some_and(|s| {
+                                                s.is_active()
+                                                    && s.guidance_generation() == expected_gen
+                                            });
+                                        if !still_same_step {
+                                            return;
+                                        }
+
+                                        if let Ok(after_win) = tokio::task::spawn_blocking(
+                                            capture::detect_active_window,
+                                        )
+                                        .await
+                                        {
+                                            let (before_hwnd, before_title) = before_win
+                                                .map(|w| (w.hwnd, w.window_title))
+                                                .unwrap_or_else(|| {
+                                                    (baseline_hwnd, baseline_title.clone())
+                                                });
+                                            if has_foreground_window_changed(
+                                                baseline_hwnd,
+                                                &baseline_title,
+                                                before_hwnd,
+                                                &before_title,
+                                                after_win.hwnd,
+                                                &after_win.window_title,
+                                            ) {
+                                                let _ = overlay::advance_step(&app_clone);
+                                            }
+                                        }
+                                    }
                                 });
                             }
                         }
@@ -230,6 +316,7 @@ mod tests {
 
     #[test]
     fn test_should_auto_advance_on_click() {
+        assert_eq!(CLICK_HIT_PADDING_PX, 28);
         let rect = Some(RectPx {
             x: 100,
             y: 200,
@@ -237,12 +324,70 @@ mod tests {
             h: 40,
         });
 
+        // Inside rect & exact edges
         assert!(should_auto_advance_on_click(rect, 140, 220));
         assert!(should_auto_advance_on_click(rect, 100, 200));
         assert!(should_auto_advance_on_click(rect, 180, 240));
-        assert!(!should_auto_advance_on_click(rect, 99, 220));
-        assert!(!should_auto_advance_on_click(rect, 181, 220));
-        assert!(!should_auto_advance_on_click(rect, 140, 241));
+
+        // Within 28px padding (covers DPI rounding and small icons)
+        assert!(should_auto_advance_on_click(rect, 99, 220));
+        assert!(should_auto_advance_on_click(rect, 72, 220)); // x = 100 - 28
+        assert!(should_auto_advance_on_click(rect, 208, 220)); // x = 180 + 28
+        assert!(should_auto_advance_on_click(rect, 140, 172)); // y = 200 - 28
+        assert!(should_auto_advance_on_click(rect, 140, 268)); // y = 240 + 28
+        assert!(should_auto_advance_on_click(rect, 72, 172));
+        assert!(should_auto_advance_on_click(rect, 208, 268));
+
+        // >28px outside on all sides
+        assert!(!should_auto_advance_on_click(rect, 71, 220));
+        assert!(!should_auto_advance_on_click(rect, 209, 220));
+        assert!(!should_auto_advance_on_click(rect, 140, 171));
+        assert!(!should_auto_advance_on_click(rect, 140, 269));
+        assert!(!should_auto_advance_on_click(rect, 71, 171));
+
+        // Negative multi-monitor coordinates
+        let neg_rect = Some(RectPx {
+            x: -500,
+            y: -300,
+            w: 32,
+            h: 24,
+        });
+        assert!(should_auto_advance_on_click(neg_rect, -528, -328));
+        assert!(!should_auto_advance_on_click(neg_rect, -529, -300));
+
+        // None or invalid dimensions
         assert!(!should_auto_advance_on_click(None, 140, 220));
+        assert!(!should_auto_advance_on_click(
+            Some(RectPx {
+                x: 100,
+                y: 200,
+                w: 0,
+                h: 40,
+            }),
+            100,
+            220
+        ));
+    }
+
+    #[test]
+    fn test_has_foreground_window_changed() {
+        // Unchanged
+        assert!(!has_foreground_window_changed(
+            100, "Chrome", 100, "Chrome", 100, "Chrome"
+        ));
+        // Changed after click (HWND switched)
+        assert!(has_foreground_window_changed(
+            100, "Chrome", 100, "Chrome", 200, "Chrome"
+        ));
+        // Changed after click (title switched on same HWND)
+        assert!(has_foreground_window_changed(
+            100, "Inbox", 100, "Inbox", 100, "Settings"
+        ));
+        // Switched before WM_LBUTTONUP fired (before already matches after, differs from baseline)
+        assert!(has_foreground_window_changed(
+            100, "Chrome", 200, "Notepad", 200, "Notepad"
+        ));
+        // Headless baseline=0 unchanged
+        assert!(!has_foreground_window_changed(0, "", 0, "", 0, ""));
     }
 }

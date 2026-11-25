@@ -17,8 +17,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
-const SETTLE_DELAY_MS: u64 = 280;
+const SETTLE_STAGE1_DELAY_MS: u64 = 300;
+const SETTLE_STAGE2_DELAY_MS: u64 = 500;
 const SETTLE_DHASH_DIFF_THRESHOLD: u32 = 3;
+const SETTLE_HIT_DHASH_DIFF_THRESHOLD: u32 = 1;
 const MAX_LIVE_HISTORY_TURNS: usize = 8;
 
 fn default_live_session_state() -> LiveSessionState {
@@ -104,6 +106,14 @@ impl LiveSessionManager {
             .unwrap_or(false)
     }
 
+    pub fn current_rect(&self) -> Option<RectPx> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|g| g.state.current_step.as_ref().and_then(|s| s.rect_px))
+            .filter(|r| r.w > 0 && r.h > 0)
+    }
+
     fn current_generation(&self) -> u64 {
         self.inner.lock().map(|g| g.generation).unwrap_or(0)
     }
@@ -118,13 +128,55 @@ pub fn should_advance_after_settle(
     prev_title: &str,
     new_title: &str,
 ) -> bool {
-    if new_hwnd != prev_hwnd || new_title != prev_title {
+    should_advance_after_settle_stage(
+        prev_dhash,
+        new_dhash,
+        prev_hwnd,
+        new_hwnd,
+        prev_title,
+        new_title,
+        "",
+        "",
+        false,
+        false,
+    )
+}
+
+/// Click-aware 2-stage settle predicate.
+///
+/// - When `click_hit_target` is `true`, even a 1-bit dHash change counts as settled, and on
+///   `final_stage` (`true` after Stage 2) a direct hit always advances so toggling checkboxes or
+///   subtle menus never stalls.
+/// - When `click_hit_target` is `false`, requires `dhash >= 3` or HWND/title/app change.
+#[allow(clippy::too_many_arguments)]
+pub fn should_advance_after_settle_stage(
+    prev_dhash: Option<u64>,
+    new_dhash: u64,
+    prev_hwnd: isize,
+    new_hwnd: isize,
+    prev_title: &str,
+    new_title: &str,
+    prev_app: &str,
+    new_app: &str,
+    click_hit_target: bool,
+    final_stage: bool,
+) -> bool {
+    if new_hwnd != prev_hwnd
+        || new_title != prev_title
+        || (!prev_app.is_empty() && !new_app.eq_ignore_ascii_case(prev_app))
+    {
         return true;
     }
-    match prev_dhash {
-        Some(prev) => crate::capture::hamming_distance(prev, new_dhash) >= SETTLE_DHASH_DIFF_THRESHOLD,
+    let threshold = if click_hit_target {
+        SETTLE_HIT_DHASH_DIFF_THRESHOLD
+    } else {
+        SETTLE_DHASH_DIFF_THRESHOLD
+    };
+    let visual_changed = match prev_dhash {
+        Some(prev) => crate::capture::hamming_distance(prev, new_dhash) >= threshold,
         None => true,
-    }
+    };
+    visual_changed || (final_stage && click_hit_target)
 }
 
 /// Pure rect containment helper used to ignore clicks inside GuideLens's own floating capsule/hub windows.
@@ -134,7 +186,7 @@ pub fn is_click_in_any_rect(rects: &[RectPx], click_x: i32, click_y: i32) -> boo
         .any(|r| r.w > 0 && r.h > 0 && r.contains(click_x, click_y))
 }
 
-fn is_click_on_own_window(app: &AppHandle, x: i32, y: i32) -> bool {
+pub(crate) fn is_click_on_own_window(app: &AppHandle, x: i32, y: i32) -> bool {
     let mut rects = Vec::with_capacity(2);
     for label in ["bar", "settings"] {
         if let Some(win) = app.get_webview_window(label) {
@@ -847,9 +899,10 @@ pub fn get_live_session(
     Ok(session_mgr.snapshot())
 }
 
-/// Called by `input/mod.rs` on global `WM_LBUTTONUP`: waits 280ms to let the UI settle,
-/// checks whether the screen changed (`dhash` diff >= 3 or foreground HWND/title switch),
-/// and automatically advances the active Live Session to the next step.
+/// Called by `input/mod.rs` on global `WM_LBUTTONUP`:
+/// - Determines `click_hit_target` before acquiring the settle lock.
+/// - Immediately clears the old highlight box (keeping companion visible) when the user clicks the target.
+/// - Runs 2-stage settle polling (300ms + 500ms = 800ms) and advances the active Live Session.
 pub fn notify_user_click(app: &AppHandle, x: i32, y: i32) {
     if is_click_on_own_window(app, x, y) {
         return;
@@ -858,6 +911,12 @@ pub fn notify_user_click(app: &AppHandle, x: i32, y: i32) {
     let Some(session_mgr) = app.try_state::<LiveSessionManager>() else {
         return;
     };
+
+    let current_step_rect = app
+        .try_state::<overlay::OverlayState>()
+        .and_then(|s| s.current_rect())
+        .or_else(|| session_mgr.current_rect());
+    let click_hit_target = crate::input::should_auto_advance_on_click(current_step_rect, x, y);
 
     let settle_ctx = {
         let Ok(mut guard) = session_mgr.inner.lock() else {
@@ -882,46 +941,79 @@ pub fn notify_user_click(app: &AppHandle, x: i32, y: i32) {
     let (expected_gen, prev_dhash, prev_hwnd, prev_title, prev_app, settle_snapshot) = settle_ctx;
     emit_live_session(app, &settle_snapshot);
 
+    if click_hit_target {
+        let _ = crate::overlay::clear_step_keep_companion(
+            app,
+            Some("Checking next step...".to_string()),
+        );
+    }
+
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(SETTLE_DELAY_MS)).await;
-
         let Some(mgr) = app_handle.try_state::<LiveSessionManager>() else {
             return;
         };
+
+        // Stage 1: wait 300ms for immediate clicks/navigation to render.
+        tokio::time::sleep(Duration::from_millis(SETTLE_STAGE1_DELAY_MS)).await;
         if mgr.current_generation() != expected_gen {
             return;
         }
 
-        let app_for_cap = app_handle.clone();
-        let frame_res = tokio::task::spawn_blocking(move || {
-            crate::capture::capture_for_live_grounding(Some(&app_for_cap))
+        let app_for_cap1 = app_handle.clone();
+        let stage1_frame = tokio::task::spawn_blocking(move || {
+            crate::capture::capture_for_live_grounding(Some(&app_for_cap1))
         })
         .await;
 
-        let Ok(Ok(frame)) = frame_res else {
-            if let Ok(mut guard) = mgr.inner.lock() {
-                if guard.generation == expected_gen
-                    && guard.state.status == LiveSessionStatus::WaitingSettle
-                {
-                    guard.state.status = LiveSessionStatus::Guiding;
-                    guard.settle_pending = false;
-                    emit_live_session(&app_handle, &guard.state);
-                }
-            }
-            return;
+        let mut ready_to_advance = match stage1_frame {
+            Ok(Ok(frame)) => should_advance_after_settle_stage(
+                prev_dhash,
+                frame.dhash64,
+                prev_hwnd,
+                frame.hwnd,
+                &prev_title,
+                &frame.window_title,
+                &prev_app,
+                &frame.active_app,
+                click_hit_target,
+                false,
+            ),
+            _ => false,
         };
 
-        let screen_changed = should_advance_after_settle(
-            prev_dhash,
-            frame.dhash64,
-            prev_hwnd,
-            frame.hwnd,
-            &prev_title,
-            &frame.window_title,
-        ) || !frame.active_app.eq_ignore_ascii_case(&prev_app);
+        // Stage 2: wait another 500ms (800ms total) for Start menu, Electron/web modals, or animations.
+        if !ready_to_advance {
+            tokio::time::sleep(Duration::from_millis(SETTLE_STAGE2_DELAY_MS)).await;
+            if mgr.current_generation() != expected_gen {
+                return;
+            }
 
-        if !screen_changed {
+            let app_for_cap2 = app_handle.clone();
+            let stage2_frame = tokio::task::spawn_blocking(move || {
+                crate::capture::capture_for_live_grounding(Some(&app_for_cap2))
+            })
+            .await;
+
+            ready_to_advance = match stage2_frame {
+                Ok(Ok(frame)) => should_advance_after_settle_stage(
+                    prev_dhash,
+                    frame.dhash64,
+                    prev_hwnd,
+                    frame.hwnd,
+                    &prev_title,
+                    &frame.window_title,
+                    &prev_app,
+                    &frame.active_app,
+                    click_hit_target,
+                    true,
+                ),
+                // If user directly clicked the target, still advance cleanly even if fast frame capture erred.
+                _ => click_hit_target,
+            };
+        }
+
+        if !ready_to_advance {
             if let Ok(mut guard) = mgr.inner.lock() {
                 if guard.generation == expected_gen
                     && guard.state.status == LiveSessionStatus::WaitingSettle
@@ -932,6 +1024,13 @@ pub fn notify_user_click(app: &AppHandle, x: i32, y: i32) {
                 }
             }
             return;
+        }
+
+        if !click_hit_target {
+            let _ = crate::overlay::clear_step_keep_companion(
+                &app_handle,
+                Some("Checking next step...".to_string()),
+            );
         }
 
         let (Some(db), Some(brain_state)) = (
@@ -1108,5 +1207,154 @@ mod tests {
         let settled = build_live_turn_query("Export PNG", None, false);
         assert!(settled.contains("Overall Goal: Export PNG"));
         assert!(settled.contains("settled"));
+    }
+
+    #[test]
+    fn settle_stage_supports_padding_subtle_dhash_and_two_stage_fallback() {
+        let base_hash: u64 = 0x1234_5678_9abc_def0;
+
+        // Verify CLICK_HIT_PADDING_PX covers 28px around target rect
+        let target_rect = Some(RectPx {
+            x: 300,
+            y: 400,
+            w: 40,
+            h: 20,
+        });
+        assert_eq!(crate::input::CLICK_HIT_PADDING_PX, 28);
+        assert!(crate::input::should_auto_advance_on_click(
+            target_rect,
+            300 - 28,
+            400 - 28
+        ));
+        assert!(!crate::input::should_auto_advance_on_click(
+            target_rect,
+            300 - 29,
+            400
+        ));
+
+        // Direct click hit: 1-bit dHash change triggers Stage 1 immediately
+        assert!(should_advance_after_settle_stage(
+            Some(base_hash),
+            base_hash ^ 0b1,
+            100,
+            100,
+            "Settings",
+            "Settings",
+            "ms-settings.exe",
+            "ms-settings.exe",
+            true,
+            false
+        ));
+
+        // Direct click hit: 0-bit change in Stage 1 waits for Stage 2...
+        assert!(!should_advance_after_settle_stage(
+            Some(base_hash),
+            base_hash,
+            100,
+            100,
+            "Settings",
+            "Settings",
+            "ms-settings.exe",
+            "ms-settings.exe",
+            true,
+            false
+        ));
+        // ...and in Stage 2 (final_stage=true), direct target click still advances so subtle toggles never stall
+        assert!(should_advance_after_settle_stage(
+            Some(base_hash),
+            base_hash,
+            100,
+            100,
+            "Settings",
+            "Settings",
+            "ms-settings.exe",
+            "ms-settings.exe",
+            true,
+            true
+        ));
+
+        // Outside click miss: 1-2 bit jitter does NOT advance even in Stage 2
+        assert!(!should_advance_after_settle_stage(
+            Some(base_hash),
+            base_hash ^ 0b11,
+            100,
+            100,
+            "Settings",
+            "Settings",
+            "ms-settings.exe",
+            "ms-settings.exe",
+            false,
+            true
+        ));
+
+        // Outside click miss: active_app switch advances
+        assert!(should_advance_after_settle_stage(
+            Some(base_hash),
+            base_hash,
+            100,
+            100,
+            "Settings",
+            "Settings",
+            "ms-settings.exe",
+            "chrome.exe",
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn immediate_clear_semantics_clear_overlay_while_session_waits_settle() {
+        let overlay_state = overlay::OverlayState::new();
+        let mgr = LiveSessionManager::new();
+        let rect = RectPx {
+            x: 500,
+            y: 300,
+            w: 96,
+            h: 32,
+        };
+        let step = ResolvedStep {
+            step_number: 1,
+            instruction_line: "Click Save".to_string(),
+            target_name: Some("Save".to_string()),
+            control_type: Some("Button".to_string()),
+            bbox: None,
+            confidence: 0.95,
+            shortcut: None,
+            terminal_command: None,
+            explanation: None,
+            spoken_text: None,
+            target_id: Some(3),
+            action_kind: Some("click".to_string()),
+            companion_emotion: Some("pointing".to_string()),
+            goal_complete: false,
+            rect_px: Some(rect),
+            source: crate::types::StepSource::Uia,
+        };
+
+        // Simulate active guiding step in both session and overlay state
+        {
+            let mut s_guard = mgr.inner.lock().unwrap();
+            s_guard.state.session_id = Some("live-clear-test".to_string());
+            s_guard.state.status = LiveSessionStatus::Guiding;
+            s_guard.state.current_step = Some(step.clone());
+        }
+        assert_eq!(mgr.current_rect(), Some(rect));
+
+        // Check click hit BEFORE acquiring settle lock
+        let hit = crate::input::should_auto_advance_on_click(mgr.current_rect(), 510, 345);
+        assert!(hit);
+
+        // Transition session to WaitingSettle and immediately clear overlay highlight box
+        {
+            let mut s_guard = mgr.inner.lock().unwrap();
+            s_guard.settle_pending = true;
+            s_guard.state.status = LiveSessionStatus::WaitingSettle;
+        }
+        overlay_state.clear_in_memory();
+
+        assert!(!overlay_state.is_active());
+        assert_eq!(overlay_state.current_rect(), None);
+        assert!(mgr.is_active());
+        assert!(!mgr.is_guiding());
     }
 }

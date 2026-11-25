@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 static LAST_EXTERNAL_WINDOW: OnceLock<Mutex<Option<ActiveWindowInfo>>> = OnceLock::new();
@@ -500,10 +500,42 @@ pub fn save_bytes_async(path: PathBuf, bytes: Vec<u8>) {
     }
 }
 
+struct OverlayCaptureHideGuard {
+    window: Option<tauri::WebviewWindow>,
+}
+
+impl Drop for OverlayCaptureHideGuard {
+    fn drop(&mut self) {
+        if let Some(win) = self.window.take() {
+            let _ = win.show();
+        }
+    }
+}
+
+fn hide_overlay_if_capture_unexcluded(app: Option<&AppHandle>) -> OverlayCaptureHideGuard {
+    let Some(app_handle) = app else {
+        return OverlayCaptureHideGuard { window: None };
+    };
+    if crate::overlay::is_overlay_excluded_from_capture() {
+        return OverlayCaptureHideGuard { window: None };
+    }
+    let Some(win) = app_handle.get_webview_window("overlay") else {
+        return OverlayCaptureHideGuard { window: None };
+    };
+    if !win.is_visible().unwrap_or(false) {
+        return OverlayCaptureHideGuard { window: None };
+    }
+    let _ = win.hide();
+    std::thread::sleep(std::time::Duration::from_millis(25));
+    OverlayCaptureHideGuard { window: Some(win) }
+}
+
 /// Captures the active monitor into memory with zero disk I/O for low-latency live grounding.
-pub fn capture_for_live_grounding(_app: Option<&AppHandle>) -> Result<LiveCaptureFrame, String> {
+pub fn capture_for_live_grounding(app: Option<&AppHandle>) -> Result<LiveCaptureFrame, String> {
     let started = Instant::now();
+    let _guard = hide_overlay_if_capture_unexcluded(app);
     let (image, monitor, win_info) = capture_active_monitor_rgba()?;
+    drop(_guard);
     let dhash64 = compute_dhash64(&image);
     let capture_ms = started.elapsed().as_millis() as u64;
 
@@ -520,12 +552,18 @@ pub fn capture_for_live_grounding(_app: Option<&AppHandle>) -> Result<LiveCaptur
 
 /// Captures the active monitor with `xcap`, compresses as JPEG (quality 82 for <80ms speed),
 /// saves to `%LOCALAPPDATA%\GuideLens\captures`, and returns `Capture`.
-pub fn capture_active(_app: &AppHandle) -> Result<Capture, String> {
-    capture_active_screen()
+pub fn capture_active(app: &AppHandle) -> Result<Capture, String> {
+    capture_active_screen_with_app(Some(app))
 }
 
 pub fn capture_active_screen() -> Result<Capture, String> {
+    capture_active_screen_with_app(None)
+}
+
+fn capture_active_screen_with_app(app: Option<&AppHandle>) -> Result<Capture, String> {
+    let _guard = hide_overlay_if_capture_unexcluded(app);
     let (rgba_img, monitor_info, win_info) = capture_active_monitor_rgba()?;
+    drop(_guard);
     let jpeg_bytes = encode_rgba_as_jpeg(&rgba_img, 82)?;
 
     let ts = SystemTime::now()

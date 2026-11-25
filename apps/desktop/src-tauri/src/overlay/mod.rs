@@ -3,8 +3,17 @@ use crate::types::{
     MonitorInfo, OverlayCompanionPayload, RectPx, ResolvedStep, StepChangedPayload, StepMode,
     StepSource,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
+
+static OVERLAY_EXCLUDED_FROM_CAPTURE: AtomicBool = AtomicBool::new(false);
+
+/// Returns whether the overlay window was successfully excluded from OS screen capture
+/// via `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`.
+pub fn is_overlay_excluded_from_capture() -> bool {
+    OVERLAY_EXCLUDED_FROM_CAPTURE.load(Ordering::Relaxed)
+}
 
 #[derive(Debug, Clone, Default)]
 struct ActiveGuidance {
@@ -17,6 +26,9 @@ struct ActiveGuidance {
     mode: StepMode,
     session_id: Option<String>,
     active: bool,
+    generation: u64,
+    target_hwnd: isize,
+    target_title: String,
 }
 
 #[derive(Clone, Default)]
@@ -51,6 +63,28 @@ impl OverlayState {
             return None;
         }
         guard.steps.get(guard.current_index).cloned()
+    }
+
+    pub fn guidance_generation(&self) -> u64 {
+        self.inner.lock().map(|g| g.generation).unwrap_or(0)
+    }
+
+    pub fn target_window(&self) -> (isize, String) {
+        self.inner
+            .lock()
+            .map(|g| (g.target_hwnd, g.target_title.clone()))
+            .unwrap_or((0, String::new()))
+    }
+
+    pub fn clear_in_memory(&self) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.active = false;
+            guard.steps.clear();
+            guard.current_index = 0;
+            guard.generation = guard.generation.wrapping_add(1);
+            guard.target_hwnd = 0;
+            guard.target_title.clear();
+        }
     }
 }
 
@@ -91,9 +125,10 @@ pub fn configure_overlay_window(app: &AppHandle) {
     if let Ok(hwnd) = win.hwnd() {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{
-            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
-            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_LAYERED,
-            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+            GetWindowLongPtrW, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos,
+            GWL_EXSTYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            WDA_EXCLUDEFROMCAPTURE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+            WS_EX_TRANSPARENT,
         };
         unsafe {
             let raw_hwnd = HWND(hwnd.0 as _);
@@ -112,6 +147,8 @@ pub fn configure_overlay_window(app: &AppHandle) {
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
+            let excluded = SetWindowDisplayAffinity(raw_hwnd, WDA_EXCLUDEFROMCAPTURE).is_ok();
+            OVERLAY_EXCLUDED_FROM_CAPTURE.store(excluded, Ordering::Relaxed);
         }
     }
 }
@@ -279,6 +316,7 @@ pub fn start_guidance(
         let _ = overlay_win.show();
     }
 
+    let target_win = crate::capture::detect_active_window();
     let first_step = steps.first().cloned();
     let state = app.state::<OverlayState>();
     let snapshot = {
@@ -295,6 +333,9 @@ pub fn start_guidance(
         guard.mode = mode;
         guard.session_id = session_id;
         guard.active = true;
+        guard.generation = guard.generation.wrapping_add(1);
+        guard.target_hwnd = target_win.hwnd;
+        guard.target_title = target_win.window_title;
         guard.clone()
     };
 
@@ -318,6 +359,7 @@ pub fn start_overlay_guidance(
 
 /// Advances to the next step (`index + 1`). If on the final step, clears the overlay.
 pub fn advance_step(app: &AppHandle) -> Result<Option<ResolvedStep>, String> {
+    let target_win = crate::capture::detect_active_window();
     let state = app.state::<OverlayState>();
     let (completed_session_step, next_snapshot) = {
         let mut guard = state
@@ -335,13 +377,18 @@ pub fn advance_step(app: &AppHandle) -> Result<Option<ResolvedStep>, String> {
                 .map(|s| (sid.clone(), s.step_number))
         });
 
+        guard.generation = guard.generation.wrapping_add(1);
         if guard.current_index + 1 < guard.steps.len() {
             guard.current_index += 1;
+            guard.target_hwnd = target_win.hwnd;
+            guard.target_title = target_win.window_title;
             (completed, Some(guard.clone()))
         } else {
             guard.active = false;
             guard.steps.clear();
             guard.current_index = 0;
+            guard.target_hwnd = 0;
+            guard.target_title.clear();
             (completed, None)
         }
     };
@@ -373,6 +420,8 @@ fn clear_overlay_visuals_only(app: &AppHandle) {
         .and_then(|db| db.get_settings().ok())
         .unwrap_or_default();
 
+    let _ = app.emit("overlay-cleared", ());
+
     if !settings.screenday_enabled || settings.companion_id.trim().eq_ignore_ascii_case("none") {
         if let Some(overlay_win) = app.get_webview_window("overlay") {
             let _ = overlay_win.hide();
@@ -396,17 +445,47 @@ fn clear_overlay_visuals_only(app: &AppHandle) {
             },
         );
     }
+}
+
+/// Immediately clears the active step highlight box while keeping the live companion visible
+/// in `observing`/`thinking` mode (used during live click-to-advance so the old box disappears at once).
+pub fn clear_step_keep_companion(app: &AppHandle, status_text: Option<String>) -> Result<(), String> {
+    if let Some(state) = app.try_state::<OverlayState>() {
+        state.clear_in_memory();
+    }
     let _ = app.emit("overlay-cleared", ());
+
+    let settings = app
+        .try_state::<DbState>()
+        .and_then(|db| db.get_settings().ok())
+        .unwrap_or_default();
+
+    if !settings.companion_id.trim().eq_ignore_ascii_case("none") {
+        let bubble = status_text.and_then(|s| {
+            let trimmed = s.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        });
+        let _ = app.emit(
+            "overlay-companion",
+            OverlayCompanionPayload {
+                mode: "observing".to_string(),
+                companion_id: settings.companion_id,
+                emotion: "thinking".to_string(),
+                wander: settings.companion_wander,
+                x: None,
+                y: None,
+                bubble_text: bubble,
+                screenday_recording: settings.screenday_enabled,
+            },
+        );
+    }
+    Ok(())
 }
 
 /// Clears active overlay guidance, releases global hooks (when no live session is guiding), and emits `overlay-cleared`.
 pub fn clear_overlay_state(app: &AppHandle) -> Result<(), String> {
     if let Some(state) = app.try_state::<OverlayState>() {
-        if let Ok(mut guard) = state.inner.lock() {
-            guard.active = false;
-            guard.steps.clear();
-            guard.current_index = 0;
-        }
+        state.clear_in_memory();
     }
     clear_overlay_visuals_only(app);
     Ok(())
@@ -566,5 +645,13 @@ mod tests {
         assert!(state.is_active());
         assert_eq!(state.current_rect(), Some(rect));
         assert_eq!(state.current_step(), Some(step));
+
+        let gen_before = state.guidance_generation();
+        state.clear_in_memory();
+        assert!(!state.is_active());
+        assert_eq!(state.current_rect(), None);
+        assert_eq!(state.current_step(), None);
+        assert_eq!(state.target_window(), (0, String::new()));
+        assert_ne!(state.guidance_generation(), gen_before);
     }
 }

@@ -221,40 +221,37 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
     }
   };
 
-  const statusBadgeClass =
-    engineState.status === "speaking"
-      ? "bg-[#38BDF8]/20 border-[#38BDF8]/50 text-[#38BDF8]"
-      : engineState.status === "ready"
-        ? "bg-[#22C55E]/15 border-[#22C55E]/40 text-[#22C55E]"
-        : engineState.status === "loading"
-          ? "bg-amber-400/15 border-amber-400/40 text-amber-300"
-          : engineState.status === "error"
-            ? "bg-rose-500/15 border-rose-500/40 text-rose-300"
-            : "bg-white/5 border-white/10 text-[#A1A1AA]";
-
   return (
     <div className="space-y-4" data-testid="voice-studio">
-      {/* Top Status Header */}
-      <section className="rounded-xl bg-[#09090B]/80 border border-white/10 p-4 flex flex-wrap items-center justify-between gap-3">
+      {/* Engine Header */}
+      <section className="rounded-xl bg-[#111317] border border-white/[0.07] px-5 py-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-[13.5px] font-semibold text-[#F4F4F5]">
             tiny-voca Local Voice Engine · 4.5M params · 8.0 MB Offline · 24 kHz
           </h2>
-          <p className="text-[11.5px] text-[#A1A1AA] mt-0.5">
-            In-browser Web Worker synthesis with gapless Web Audio streaming — zero external server calls
+          <p className="text-[12px] text-[#8E929B] mt-0.5">
+            In-browser Web Worker synthesis with zero external server calls
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 text-[12px]">
           <span
             data-testid="voice-studio-active-voice"
-            className="px-2.5 py-1 rounded-full text-[11.5px] font-semibold bg-[#38BDF8]/15 border border-[#38BDF8]/35 text-[#38BDF8]"
+            className="font-mono text-[#E4E4E7]"
           >
             Voice: {settings.tts_voice}
           </span>
+          <span className="text-[#5C606A]">·</span>
           <span
             data-testid="voice-studio-status-badge"
-            className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold border ${statusBadgeClass}`}
+            className="inline-flex items-center gap-1.5 text-[#8E929B]"
           >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                engineState.status === "speaking" || engineState.status === "ready"
+                  ? "bg-[#F4F4F5]"
+                  : "bg-[#5C606A]"
+              }`}
+            />
             {formatStatusLabel(engineState)}
           </span>
         </div>
@@ -263,28 +260,28 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
       {engineState.error && (
         <div
           role="alert"
-          className="rounded-xl bg-rose-500/10 border border-rose-500/30 px-3.5 py-2 text-[12px] text-rose-300"
+          className="rounded-xl bg-[#111317] border border-white/[0.12] px-4 py-2.5 text-[12px] text-[#E4E4E7]"
         >
           {engineState.error}
         </div>
       )}
 
-      {/* Copilot Voice Settings */}
+      {/* Voice & Conversation Settings */}
       <section
         aria-label="Copilot Voice Settings"
-        className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3.5"
+        className="rounded-xl bg-[#111317] border border-white/[0.07] p-5 space-y-4"
       >
-        <h3 className="text-[13px] font-semibold text-[#F4F4F5]">
-          Copilot Voice & Conversation Settings
+        <h3 className="text-[13.5px] font-semibold text-[#F4F4F5]">
+          Voice &amp; Conversation
         </h3>
 
-        <div className="space-y-2.5">
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
+        <div className="divide-y divide-white/[0.06]">
+          <label className="flex items-center justify-between gap-4 py-2.5 first:pt-0 cursor-pointer">
             <div>
               <span className="block text-[12.5px] font-medium text-[#F4F4F5]">
                 Voice Guidance Output
               </span>
-              <span className="block text-[11.5px] text-[#A1A1AA]">
+              <span className="block text-[11.5px] text-[#8E929B]">
                 Speak step instructions and error cues using local tiny-voca TTS
               </span>
             </div>
@@ -295,16 +292,17 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
               onChange={(e) =>
                 void onUpdateSettings({ tts_enabled: e.target.checked })
               }
+              className="accent-[#F4F4F5]"
             />
           </label>
 
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <label className="flex items-center justify-between gap-4 py-2.5 cursor-pointer">
             <div>
               <span className="block text-[12.5px] font-medium text-[#F4F4F5]">
                 Auto-Speak Steps
               </span>
-              <span className="block text-[11.5px] text-[#A1A1AA]">
-                Automatically read each step aloud when a response or step change arrives
+              <span className="block text-[11.5px] text-[#8E929B]">
+                Read each step aloud automatically when guidance updates
               </span>
             </div>
             <input
@@ -314,16 +312,17 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
               onChange={(e) =>
                 void onUpdateSettings({ tts_auto_speak: e.target.checked })
               }
+              className="accent-[#F4F4F5]"
             />
           </label>
 
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <label className="flex items-center justify-between gap-4 py-2.5 last:pb-0 cursor-pointer">
             <div>
               <span className="block text-[12.5px] font-medium text-[#F4F4F5]">
                 Hands-Free Voice-to-Voice Turn-Taking
               </span>
-              <span className="block text-[11.5px] text-[#A1A1AA]">
-                Suppress mic input while speaking and auto-resume listening after a 250ms echo settle
+              <span className="block text-[11.5px] text-[#8E929B]">
+                Pause mic while speaking and resume after 250ms echo settle
               </span>
             </div>
             <input
@@ -335,13 +334,14 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
                   voice_conversation_mode: e.target.checked,
                 })
               }
+              className="accent-[#F4F4F5]"
             />
           </label>
         </div>
 
         {/* Voice Persona Picker */}
-        <div className="pt-2 border-t border-white/10 space-y-2">
-          <span className="block text-[12px] font-medium text-[#A1A1AA]">
+        <div className="pt-3 border-t border-white/[0.07] space-y-2">
+          <span className="block text-[12px] text-[#8E929B]">
             Voice Persona
           </span>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -356,19 +356,18 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
                   onClick={() => void onUpdateSettings({ tts_voice: v.id })}
                   className={`flex items-center justify-between rounded-lg px-3 py-2 text-left border transition-colors ${
                     selected
-                      ? "bg-[#38BDF8]/15 border-[#38BDF8] text-[#F4F4F5]"
-                      : "bg-[#09090B]/70 border-white/10 text-[#A1A1AA] hover:text-[#F4F4F5]"
+                      ? "bg-[#17191E] border-white/25 text-[#F4F4F5]"
+                      : "bg-[#0A0B0D] border-white/[0.07] text-[#8E929B] hover:text-[#F4F4F5]"
                   }`}
                 >
-                  <div>
-                    <div className="text-[12.5px] font-semibold text-[#F4F4F5]">
-                      {v.name} ({v.subtitle})
-                    </div>
+                  <div className="text-[12.5px] font-medium text-[#F4F4F5]">
+                    {v.name}{" "}
+                    <span className="text-[#8E929B] font-normal">
+                      ({v.subtitle})
+                    </span>
                   </div>
                   {selected && (
-                    <span className="text-[11px] font-semibold text-[#38BDF8]">
-                      Active
-                    </span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#F4F4F5]" />
                   )}
                 </button>
               );
@@ -377,7 +376,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
         </div>
 
         {/* Speed & Pitch Sliders */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-white/10">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-white/[0.07]">
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-[12px]">
               <label htmlFor="tts-speed-slider" className="text-[#F4F4F5]">
@@ -385,7 +384,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
               </label>
               <span
                 data-testid="tts-speed-value"
-                className="gl-mono text-[#38BDF8]"
+                className="gl-mono text-[#8E929B]"
               >
                 {settings.tts_speed.toFixed(2)}×
               </span>
@@ -401,7 +400,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
               onChange={(e) =>
                 void onUpdateSettings({ tts_speed: Number(e.target.value) })
               }
-              className="w-full accent-[#38BDF8]"
+              className="w-full h-1 accent-[#F4F4F5]"
             />
           </div>
 
@@ -412,7 +411,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
               </label>
               <span
                 data-testid="tts-pitch-value"
-                className="gl-mono text-[#38BDF8]"
+                className="gl-mono text-[#8E929B]"
               >
                 {settings.tts_pitch_shift >= 0 ? "+" : ""}
                 {settings.tts_pitch_shift.toFixed(2)}
@@ -431,13 +430,13 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
                   tts_pitch_shift: Number(e.target.value),
                 })
               }
-              className="w-full accent-[#38BDF8]"
+              className="w-full h-1 accent-[#F4F4F5]"
             />
           </div>
         </div>
 
         {/* STT Engine Selector */}
-        <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/10">
+        <div className="flex items-center justify-between gap-3 pt-3 border-t border-white/[0.07]">
           <label
             htmlFor="voice-studio-stt-select"
             className="text-[12.5px] text-[#F4F4F5]"
@@ -454,7 +453,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
                 stt_engine: e.target.value as SttEngine,
               })
             }
-            className="rounded-lg bg-[#09090B] border border-white/15 px-3 py-1.5 text-[12.5px] text-[#F4F4F5]"
+            className="rounded-lg bg-[#0A0B0D] border border-white/[0.08] px-3 py-1.5 text-[12.5px] text-[#F4F4F5]"
           >
             <option value="web_speech">
               Web Speech API (Default — Zero Overhead)
@@ -472,11 +471,11 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
       {/* Embedded tiny-voca Playground */}
       <section
         aria-label="tiny-voca Web App Playground"
-        className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3"
+        className="rounded-xl bg-[#111317] border border-white/[0.07] p-5 space-y-3"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-[13px] font-semibold text-[#F4F4F5]">
-            tiny-voca Interactive Playground
+          <h3 className="text-[13.5px] font-semibold text-[#F4F4F5]">
+            Playground
           </h3>
           <div className="flex items-center gap-1.5">
             {SAMPLE_PRESETS.map((preset) => (
@@ -485,7 +484,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
                 type="button"
                 data-testid={`voice-preset-${preset.id}`}
                 onClick={() => setSampleText(preset.text)}
-                className="px-2.5 py-1 rounded-md text-[11.5px] bg-[#09090B] border border-white/10 text-[#A1A1AA] hover:text-[#F4F4F5] hover:border-[#38BDF8]/40 transition-colors"
+                className="px-2.5 py-1 rounded-md text-[11.5px] bg-[#0A0B0D] border border-white/[0.07] text-[#8E929B] hover:text-[#F4F4F5] hover:bg-[#17191E] transition-colors"
               >
                 {preset.label}
               </button>
@@ -500,7 +499,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
           value={sampleText}
           onChange={(e) => setSampleText(e.target.value)}
           placeholder="Type any coaching cue or paragraph to synthesize locally..."
-          className="w-full rounded-lg bg-[#09090B] border border-white/15 px-3 py-2 text-[12.5px] text-[#F4F4F5] placeholder-[#A1A1AA] focus:outline-none focus:border-[#38BDF8]"
+          className="w-full rounded-lg bg-[#0A0B0D] border border-white/[0.08] px-3 py-2 text-[12.5px] text-[#F4F4F5] placeholder-[#5C606A] focus:outline-none focus:border-white/25"
         />
 
         <div className="flex flex-wrap items-center gap-2">
@@ -509,10 +508,10 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
             data-testid="voice-studio-play-btn"
             onClick={() => void handlePlayOrStop()}
             disabled={!speakingActive && !sampleText.trim()}
-            className={`px-3.5 py-1.5 rounded-lg text-[12.5px] font-semibold transition-colors ${
+            className={`px-3.5 py-1.5 rounded-lg text-[12.5px] font-medium transition-colors ${
               speakingActive
-                ? "bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30"
-                : "bg-[#38BDF8] text-[#0F172A] hover:bg-[#38BDF8]/90 disabled:opacity-40"
+                ? "bg-white/[0.08] text-[#F4F4F5] border border-white/20"
+                : "bg-[#F4F4F5] text-[#0A0B0D] hover:bg-white disabled:opacity-40"
             }`}
           >
             {speakingActive ? "Stop" : "Play Sample"}
@@ -523,7 +522,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
             data-testid="voice-studio-save-wav-btn"
             onClick={handleSaveWav}
             disabled={!lastAudio || lastAudio.audio.length === 0}
-            className="px-3 py-1.5 rounded-lg text-[12.5px] font-medium bg-white/5 border border-white/15 text-[#F4F4F5] hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-lg text-[12.5px] font-medium bg-white/[0.04] border border-white/[0.08] text-[#E4E4E7] hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             Save as WAV
           </button>
@@ -533,7 +532,7 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
             data-testid="voice-studio-benchmark-btn"
             onClick={() => void handleBenchmark()}
             disabled={isBenchmarking}
-            className="px-3 py-1.5 rounded-lg text-[12.5px] font-medium bg-white/5 border border-white/15 text-[#38BDF8] hover:bg-[#38BDF8]/15 disabled:opacity-40 transition-colors"
+            className="px-3 py-1.5 rounded-lg text-[12.5px] font-medium bg-white/[0.04] border border-white/[0.08] text-[#E4E4E7] hover:bg-white/[0.08] disabled:opacity-40 transition-colors"
           >
             {isBenchmarking ? "Benchmarking…" : "Measure Speed"}
           </button>
@@ -542,19 +541,19 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
         {benchmarkResult && (
           <div
             data-testid="voice-studio-benchmark-results"
-            className="rounded-lg bg-[#09090B] border border-[#38BDF8]/30 p-3 space-y-2"
+            className="rounded-lg bg-[#0A0B0D] border border-white/[0.08] p-3 space-y-2"
           >
             <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]">
-              <span className="font-semibold text-[#38BDF8]">
+              <span className="font-medium text-[#F4F4F5]">
                 {benchmarkResult.summary}
               </span>
               {benchmarkResult.parts && (
-                <span className="gl-mono text-[11px] text-[#A1A1AA]">
+                <span className="gl-mono text-[11px] text-[#8E929B]">
                   {benchmarkResult.parts}
                 </span>
               )}
             </div>
-            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] gl-mono text-[#A1A1AA] max-h-36 overflow-y-auto">
+            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] gl-mono text-[#8E929B] max-h-36 overflow-y-auto">
               {benchmarkResult.lines.map((line, i) => (
                 <li key={i} className="truncate">
                   {line}
@@ -565,16 +564,16 @@ export const VoiceStudio: React.FC<VoiceStudioProps> = ({
         )}
 
         <div className="space-y-1">
-          <span className="block text-[11.5px] font-medium text-[#A1A1AA]">
-            Phoneme & Speed Telemetry Log
+          <span className="block text-[11.5px] text-[#5C606A]">
+            Telemetry Log
           </span>
           <div
             data-testid="voice-studio-log"
-            className="rounded-lg bg-[#09090B] border border-white/10 p-2.5 h-28 overflow-y-auto gl-mono text-[11px] text-[#A1A1AA] space-y-1"
+            className="rounded-lg bg-[#0A0B0D] border border-white/[0.07] p-2.5 h-28 overflow-y-auto gl-mono text-[11px] text-[#8E929B] space-y-1"
           >
             {logs.length === 0 ? (
-              <p className="text-[#A1A1AA]/60">
-                Click Play Sample or Measure Speed to inspect live phonemes and real-time synthesis speed.
+              <p className="text-[#5C606A]">
+                Click Play Sample or Measure Speed to inspect live phonemes and synthesis speed.
               </p>
             ) : (
               logs.map((entry, idx) => (

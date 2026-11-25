@@ -39,14 +39,14 @@ describe("CompanionSprite and CompanionSpeechBubble", () => {
         text="Click Export <script>alert(1)</script>"
         shortcut="Ctrl+E"
         actionKind="click"
-        stepLabel="Step 1/3"
+        stepLabel="1 / 3"
         screendayRecording
       />,
     );
 
     const bubble = screen.getByTestId("companion-speech-bubble");
     expect(bubble).toHaveTextContent("Sora");
-    expect(bubble).toHaveTextContent("Step 1/3");
+    expect(bubble).toHaveTextContent("1 / 3");
     expect(bubble).toHaveTextContent("Click Export <script>alert(1)</script>");
     expect(bubble.querySelector("script")).toBeNull();
     expect(screen.getByTestId("companion-shortcut-badge")).toHaveTextContent("Ctrl+E");

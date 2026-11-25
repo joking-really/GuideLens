@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CompanionSprite } from "../companions/CompanionSprite";
 import { getCompanionPersona } from "../companions/personas";
 import {
   authStatus,
@@ -14,7 +13,6 @@ import {
   onOllamaPullProgress,
   onScreenDayFrame,
   onSettingsChanged,
-  previewCompanion,
   screendayListDays,
   screendaySetEnabled,
   screendayStatus,
@@ -42,7 +40,6 @@ import {
   CompassIcon,
   CompanionIcon,
   DiaryIcon,
-  EyeIcon,
   GraphIcon,
   ShieldIcon,
   UserIcon,
@@ -92,7 +89,6 @@ export function mapSettingsTabToAdminTab(tab?: SettingsTab): AdminHubTabId {
 interface NavItemMeta {
   id: AdminHubTabId;
   label: string;
-  subtitle: string;
   icon: React.FC<{ className?: string }>;
 }
 
@@ -100,37 +96,31 @@ const NAV_ITEMS: readonly NavItemMeta[] = [
   {
     id: "overview",
     label: "Overview",
-    subtitle: "Live Copilot, Screen Day toggle & pipeline latency telemetry",
     icon: CompassIcon,
   },
   {
     id: "diary",
-    label: "Screen Day Diary",
-    subtitle: "Visual timeline scrub, projects, meetings OCR & nightly digest",
+    label: "Daily Diary",
     icon: DiaryIcon,
   },
   {
     id: "graph",
     label: "Knowledge Graph",
-    subtitle: "Learned App → Screen → Control → Intent paths & .graph.md",
     icon: GraphIcon,
   },
   {
     id: "companions",
-    label: "Companions & Voice",
-    subtitle: "Animated sprites (Mochi, Byte, Sora, Flow) & tiny-voca TTS",
+    label: "Companion & Voice",
     icon: CompanionIcon,
   },
   {
     id: "brains",
-    label: "Brains & Agents",
-    subtitle: "Subscription CLIs, API providers, Credential vault & Ollama",
+    label: "Models & Agents",
     icon: BrainIcon,
   },
   {
     id: "privacy",
-    label: "Privacy & System",
-    subtitle: "Privacy Shield, accessibility, hotkeys & GuideLens Cloud",
+    label: "Settings",
     icon: ShieldIcon,
   },
 ];
@@ -171,7 +161,9 @@ export const AdminHub: React.FC<AdminHubProps> = ({
     mapSettingsTabToAdminTab(initialTab),
   );
   const [focusAccountSeq, setFocusAccountSeq] = useState(0);
-  const [focusHistorySeq, setFocusHistorySeq] = useState(0);
+  const [focusHistorySeq, setFocusHistorySeq] = useState(() =>
+    initialTab === "history" ? 1 : 0,
+  );
 
   useEffect(() => {
     setActiveTab(mapSettingsTabToAdminTab(initialTab));
@@ -221,7 +213,6 @@ export const AdminHub: React.FC<AdminHubProps> = ({
     count: 0,
   });
   const [kgStats, setKgStats] = useState({ nodes: 0, sessions: 0 });
-  const [peekToast, setPeekToast] = useState<string | null>(null);
 
   const refreshTelemetry = useCallback(async () => {
     const [sd, days, lat, kg] = await Promise.all([
@@ -353,23 +344,6 @@ export const AdminHub: React.FC<AdminHubProps> = ({
     setLocalSettings((prev) => ({ ...prev, screenday_enabled: enabled }));
   };
 
-  const handleTestOverlayPeek = async () => {
-    const targetId =
-      settings.companion_id === "none" ? "pixel_cat" : settings.companion_id;
-    const persona = getCompanionPersona(targetId);
-    setPeekToast(`Sent peek to ${persona.name} on overlay`);
-    window.setTimeout(() => setPeekToast(null), 2200);
-    try {
-      await previewCompanion(
-        targetId,
-        "peeking",
-        persona.idleWhisper || "Peeking from GuideLens Control Center!",
-      );
-    } catch {
-      // Ignore in browser preview
-    }
-  };
-
   const activeNavMeta = useMemo(
     () => NAV_ITEMS.find((item) => item.id === activeTab) ?? NAV_ITEMS[0],
     [activeTab],
@@ -382,42 +356,26 @@ export const AdminHub: React.FC<AdminHubProps> = ({
     <div
       aria-label="GuideLens Control Center"
       data-testid="settings-view"
-      className="h-screen w-full overflow-hidden bg-[#080A0F] text-zinc-100 flex select-none relative"
+      className="h-screen w-full overflow-hidden bg-[#0A0B0D] text-[#F4F4F5] flex select-none"
     >
-      {/* Subtle Atmospheric Radial Glow */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_rgba(56,189,248,0.09),transparent_48%),radial-gradient(ellipse_at_bottom_right,_rgba(129,140,248,0.08),transparent_52%)]"
-      />
-
-      {/* Left Navigation Rail */}
-      <aside className="relative z-10 w-60 shrink-0 border-r border-white/[0.08] bg-[#0B0E15]/95 backdrop-blur-xl flex flex-col justify-between p-3.5">
-        <div className="space-y-5">
-          {/* Brand Lockup */}
-          <div className="flex items-center justify-between px-1.5 pt-0.5">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-400 to-indigo-500 flex items-center justify-center shadow-lg shadow-sky-500/20 text-slate-950 font-black text-sm">
-                G
-              </div>
-              <div>
-                <div className="text-[13.5px] font-bold tracking-tight text-zinc-100">
-                  GuideLens
-                </div>
-                <div className="text-[10.5px] text-zinc-400">
-                  Control Center
-                </div>
-              </div>
+      {/* Left Navigation Sidebar */}
+      <aside className="w-[212px] shrink-0 border-r border-white/[0.07] bg-[#0A0B0D] flex flex-col justify-between px-3 py-4">
+        <div className="space-y-6">
+          {/* Minimal Brand Lockup */}
+          <div className="flex items-center gap-2.5 px-2">
+            <div className="w-6 h-6 rounded-md bg-[#17191E] border border-white/[0.08] flex items-center justify-center text-[#F4F4F5] font-semibold text-[11px]">
+              G
             </div>
-            <span className="px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/10 font-mono text-[10px] text-sky-300">
-              v2
+            <span className="text-[13px] font-semibold tracking-tight text-[#F4F4F5]">
+              GuideLens
             </span>
           </div>
 
-          {/* Primary 6 Nav Tabs */}
+          {/* Primary 6 Navigation Items */}
           <nav
             role="tablist"
             aria-label="Control Center Sections"
-            className="space-y-1"
+            className="space-y-0.5"
           >
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
@@ -430,15 +388,15 @@ export const AdminHub: React.FC<AdminHubProps> = ({
                   aria-selected={selected}
                   data-testid={`tab-${item.id}`}
                   onClick={() => setActiveTab(item.id)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[12.5px] font-medium transition-all ${
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[12.5px] font-medium transition-colors border ${
                     selected
-                      ? "bg-sky-400/15 border border-sky-400/40 text-sky-200 shadow-sm"
-                      : "border border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]"
+                      ? "bg-[#17191E] border-white/[0.07] text-[#F4F4F5]"
+                      : "border-transparent text-[#8E929B] hover:text-[#F4F4F5] hover:bg-white/[0.03]"
                   }`}
                 >
                   <Icon
                     className={`w-4 h-4 shrink-0 ${
-                      selected ? "text-sky-300" : "text-zinc-500"
+                      selected ? "text-[#F4F4F5]" : "text-[#5C606A]"
                     }`}
                   />
                   <span className="truncate">{item.label}</span>
@@ -446,154 +404,77 @@ export const AdminHub: React.FC<AdminHubProps> = ({
               );
             })}
           </nav>
-
-          {/* Compact History Shortcut */}
-          <div className="pt-2 border-t border-white/[0.06]">
-            <button
-              type="button"
-              data-testid="tab-history"
-              onClick={() => {
-                setActiveTab("diary");
-                setFocusHistorySeq((n) => n + 1);
-              }}
-              className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.07] text-[11.5px] text-zinc-300 transition-colors"
-            >
-              <span>Guided Session History</span>
-              <span className="font-mono text-[10.5px] text-sky-300">→</span>
-            </button>
-          </div>
         </div>
 
-        {/* Left Rail Footer: Cloud Account & Pro Badge */}
-        <div className="space-y-2 pt-3 border-t border-white/[0.07]">
-          <button
-            type="button"
-            data-testid="tab-account"
-            onClick={() => {
-              setActiveTab("privacy");
-              setFocusAccountSeq((n) => n + 1);
-            }}
-            className="w-full text-left rounded-xl bg-[#11141D] hover:bg-[#161B26] border border-white/[0.08] p-2.5 flex items-center gap-2.5 transition-colors"
-          >
-            <div className="w-8 h-8 rounded-lg bg-sky-400/15 border border-sky-400/30 flex items-center justify-center text-sky-300 shrink-0">
-              <UserIcon className="w-4 h-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[12px] font-semibold text-zinc-100 truncate">
-                {auth.logged_in && auth.email ? auth.email : "GuideLens Cloud"}
+        {/* Left Rail Footer: Signed-in account ONLY if logged_in, else understated v2 */}
+        <div className="pt-3 border-t border-white/[0.07]">
+          {auth.logged_in ? (
+            <button
+              type="button"
+              data-testid="tab-account"
+              onClick={() => {
+                setActiveTab("privacy");
+                setFocusAccountSeq((n) => n + 1);
+              }}
+              className="w-full text-left rounded-lg bg-[#111317] hover:bg-[#17191E] border border-white/[0.07] p-2.5 flex items-center gap-2.5 transition-colors"
+            >
+              <div className="w-7 h-7 rounded-md bg-white/[0.05] border border-white/[0.08] flex items-center justify-center text-[#E4E4E7] shrink-0">
+                <UserIcon className="w-3.5 h-3.5" />
               </div>
-              <div className="text-[10.5px] text-zinc-400 flex items-center justify-between">
-                <span className="uppercase font-mono text-sky-300">
-                  {auth.tier === "free" ? "Free Tier" : auth.tier.replace("_", " ")}
-                </span>
-                <span>
-                  {auth.usage}/{auth.limit}
-                </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[12px] font-medium text-[#F4F4F5] truncate">
+                  {auth.email || "Signed in"}
+                </div>
+                <div className="text-[10.5px] text-[#8E929B] flex items-center justify-between">
+                  <span className="capitalize">
+                    {auth.tier === "free" ? "Free" : auth.tier.replace("_", " ")}
+                  </span>
+                  <span className="font-mono text-[#5C606A]">
+                    {auth.usage}/{auth.limit}
+                  </span>
+                </div>
               </div>
+            </button>
+          ) : (
+            <div className="px-2.5 py-1 text-[11px] font-mono text-[#5C606A]">
+              v2
             </div>
-          </button>
+          )}
         </div>
       </aside>
 
       {/* Main Content Shell */}
-      <div className="relative z-10 flex-1 min-w-0 flex flex-col overflow-hidden">
-        {/* Live Status Top Bar */}
-        <header className="h-14 shrink-0 border-b border-white/[0.08] bg-[#0B0E15]/80 backdrop-blur-xl px-5 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-[14.5px] font-bold text-zinc-100 truncate">
-              {activeNavMeta.label}
-            </h1>
-            <p className="text-[11px] text-zinc-400 truncate">
-              {activeNavMeta.subtitle}
-            </p>
-          </div>
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-[#0A0B0D]">
+        {/* Calm 52px Top Header */}
+        <header className="h-[52px] shrink-0 border-b border-white/[0.07] bg-[#0A0B0D] px-6 flex items-center justify-between gap-4">
+          <h1 className="text-[14px] font-semibold text-[#F4F4F5] tracking-tight truncate">
+            {activeNavMeta.label}
+          </h1>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Active Companion Badge */}
-            <button
-              type="button"
-              data-testid="topbar-companion-badge"
-              onClick={() => setActiveTab("companions")}
-              title="Open Companions & Voice Studio"
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-[11.5px] text-zinc-200 transition-colors"
+          <div className="flex items-center gap-3 shrink-0">
+            <div
+              data-testid="topbar-status-summary"
+              className="hidden sm:flex items-center gap-2 text-[12px] text-[#8E929B]"
             >
-              <CompanionSprite
-                companionId={
-                  settings.companion_id === "none"
-                    ? "pixel_cat"
-                    : settings.companion_id
-                }
-                emotion={sdStatus.enabled ? "peeking" : "idle"}
-                size={18}
-              />
-              <span className="font-medium">{activePersona.name}</span>
-            </button>
-
-            {/* Active Brain + Latency Pill */}
-            <button
-              type="button"
-              data-testid="topbar-brain-latency-pill"
-              onClick={() => setActiveTab("brains")}
-              title="Configure Active Brain & Test Speed"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/12 hover:bg-indigo-500/20 border border-indigo-400/30 text-[11.5px] text-indigo-200 transition-colors"
-            >
-              <span className="font-medium">
-                {formatBrainPillLabel(settings)}
-              </span>
-              <span className="font-mono text-[10.5px] text-sky-300 border-l border-white/15 pl-1.5">
-                {avgLatencyMs ? `${avgLatencyMs}ms` : "--ms"}
-              </span>
-            </button>
-
-            {/* Screen Day Live Toggle */}
-            <button
-              type="button"
-              data-testid="topbar-screenday-toggle"
-              onClick={() => void handleToggleScreenDay(!sdStatus.enabled)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11.5px] font-medium transition-colors ${
-                sdStatus.enabled
-                  ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-300"
-                  : "bg-white/[0.04] border-white/10 text-zinc-300 hover:bg-white/[0.08]"
-              }`}
-            >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  sdStatus.enabled
-                    ? "bg-emerald-400 animate-pulse"
-                    : "bg-zinc-500"
-                }`}
-              />
-              <span>Screen Day {sdStatus.enabled ? "Live" : "Off"}</span>
-            </button>
-
-            {/* Test Overlay Peek Shortcut */}
-            <button
-              type="button"
-              data-testid="topbar-test-peek-btn"
-              onClick={() => void handleTestOverlayPeek()}
-              className="hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-sky-400/12 hover:bg-sky-400/22 border border-sky-400/35 text-[11.5px] text-sky-200 font-medium transition-colors"
-            >
-              <EyeIcon className="w-3.5 h-3.5" />
-              <span>{peekToast ? "Peek Sent!" : "Test Overlay Peek"}</span>
-            </button>
-
-            {/* Privacy Shield Pill */}
-            <button
-              type="button"
-              data-testid="topbar-privacy-pill"
-              onClick={() => setActiveTab("privacy")}
-              title="Privacy Shield & Hotkeys"
-              className={`hidden xl:inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-medium ${
-                settings.screenday_skip_private
-                  ? "bg-amber-500/12 border-amber-400/30 text-amber-200"
-                  : "bg-white/[0.04] border-white/10 text-zinc-400"
-              }`}
-            >
-              <ShieldIcon className="w-3 h-3" />
-              <span>
-                {settings.screenday_skip_private ? "Shield ON" : "Shield OFF"}
-              </span>
-            </button>
+              {sdStatus.enabled && (
+                <span className="inline-flex items-center gap-1.5 text-[#F4F4F5]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>Screen Day</span>
+                  <span className="text-[#5C606A]">·</span>
+                </span>
+              )}
+              <span>{activePersona.name}</span>
+              <span className="text-[#5C606A]">·</span>
+              <span>{formatBrainPillLabel(settings)}</span>
+              {avgLatencyMs != null && (
+                <>
+                  <span className="text-[#5C606A]">·</span>
+                  <span className="font-mono text-[#8E929B]">
+                    {avgLatencyMs}ms
+                  </span>
+                </>
+              )}
+            </div>
 
             {onClose && (
               <button
@@ -601,17 +482,17 @@ export const AdminHub: React.FC<AdminHubProps> = ({
                 onClick={onClose}
                 aria-label="Close Settings"
                 data-testid="close-settings-btn"
-                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-zinc-100 transition-colors"
+                className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] text-[#8E929B] hover:text-[#F4F4F5] transition-colors"
               >
-                <CloseIcon className="w-4 h-4" />
+                <CloseIcon className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
         </header>
 
         {/* Scrollable Active Panel */}
-        <main className="flex-1 overflow-y-auto p-5 select-text">
-          <div className="max-w-5xl mx-auto">
+        <main className="flex-1 overflow-y-auto px-6 py-6 select-text">
+          <div className="max-w-4xl mx-auto">
             {activeTab === "overview" && (
               <OverviewTab
                 settings={settings}

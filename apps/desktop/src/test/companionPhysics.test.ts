@@ -92,7 +92,7 @@ describe("companionPhysics", () => {
     expect(tinySpot.facing).toBe("right");
   });
 
-  it("stepParabolicArc traces clean gravity arc with mid-air lift and landing squash", () => {
+  it("stepParabolicArc traces silky easeOutQuart glide with <=16px arc lift, <=2deg lean, and 1.03x settle", () => {
     const start = { x: 100, y: 500 };
     const end = { x: 600, y: 500 };
 
@@ -102,15 +102,19 @@ describe("companionPhysics", () => {
     expect(t0.grounded).toBe(true);
     expect(t0.scaleX).toBe(1);
     expect(t0.scaleY).toBe(1);
+    expect(t0.rotationDeg).toBe(0);
 
     const tMid = stepParabolicArc(start, end, 0.5);
-    expect(tMid.x).toBeCloseTo(350, 1);
-    expect(tMid.y).toBeLessThan(460); // Lifted upward cleanly
+    expect(tMid.x).toBeGreaterThan(350); // easeOutQuart advances smoothly ahead of linear
+    expect(tMid.y).toBeLessThan(500);
+    expect(500 - tMid.y).toBeLessThanOrEqual(16); // gentle max 16px arc lift
+    expect(Math.abs(tMid.rotationDeg)).toBeLessThanOrEqual(2);
     expect(tMid.grounded).toBe(false);
 
-    const tLand = stepParabolicArc(start, end, 0.92);
+    const tLand = stepParabolicArc(start, end, 0.89);
     expect(tLand.scaleX).toBeGreaterThan(1);
-    expect(tLand.scaleY).toBeLessThan(1);
+    expect(tLand.scaleX).toBeLessThanOrEqual(1.035);
+    expect(tLand.scaleY).toBeGreaterThanOrEqual(1);
     expect(tLand.grounded).toBe(false);
 
     const t1 = stepParabolicArc(start, end, 1);
@@ -119,23 +123,30 @@ describe("companionPhysics", () => {
     expect(t1.grounded).toBe(true);
     expect(t1.scaleX).toBe(1);
     expect(t1.scaleY).toBe(1);
+    expect(t1.rotationDeg).toBe(0);
   });
 
-  it("computeWanderWaypoint hugs screen edges and taskbar across ticks", () => {
-    const seenModes = new Set<string>();
+  it("computeWanderWaypoint keeps companion peacefully in bottom-right resting zone without edge teleporting", () => {
+    const xs: number[] = [];
+    const ys: number[] = [];
     for (let tick = 0; tick < 8; tick++) {
       const wp = computeWanderWaypoint(viewport, tick, "Code.exe", 64);
-      seenModes.add(wp.mode);
-      expect(wp.x).toBeGreaterThanOrEqual(6);
-      expect(wp.x + 64).toBeLessThanOrEqual(viewport.w - 6);
-      expect(wp.y).toBeGreaterThanOrEqual(12);
-      expect(wp.y + 64).toBeLessThanOrEqual(viewport.h - 8);
+      xs.push(wp.x);
+      ys.push(wp.y);
+      expect(wp.mode).toBe("corner_perch");
+      expect(wp.facing).toBe("left");
+      expect(wp.x).toBeGreaterThanOrEqual(viewport.w - 64 - 80);
+      expect(wp.x + 64).toBeLessThanOrEqual(viewport.w - 12);
+      expect(wp.y).toBeGreaterThanOrEqual(viewport.h - 64 - 80);
+      expect(wp.y + 64).toBeLessThanOrEqual(viewport.h - 12);
     }
-    expect(seenModes.has("taskbar_walk")).toBe(true);
-    expect(seenModes.has("peek_left") || seenModes.has("peek_right")).toBe(true);
+    const spanX = Math.max(...xs) - Math.min(...xs);
+    const spanY = Math.max(...ys) - Math.min(...ys);
+    expect(spanX).toBeLessThanOrEqual(36);
+    expect(spanY).toBeLessThanOrEqual(16);
   });
 
-  it("computeBubblePosition keeps bubble onscreen near screen edges", () => {
+  it("computeBubblePosition keeps bubble onscreen and avoids overlapping targetRect and step badge", () => {
     const rightPos = computeBubblePosition(
       { x: 1840, y: 400 },
       64,
@@ -145,5 +156,24 @@ describe("companionPhysics", () => {
     expect(rightPos.side).toBe("left");
     expect(rightPos.x).toBeGreaterThanOrEqual(12);
     expect(rightPos.x + 260).toBeLessThanOrEqual(viewport.w - 12);
+
+    // When companion is to the left of a target near the left edge (where left bubble wouldn't fit),
+    // bubble must NOT overlap targetRect or step badge on the right.
+    const targetRect = { x: 230, y: 130, w: 84, h: 22 };
+    const bubble = computeBubblePosition(
+      { x: 152, y: 109 },
+      64,
+      { w: 258, h: 74 },
+      viewport,
+      targetRect,
+    );
+    const overlapsTarget =
+      bubble.x < targetRect.x + targetRect.w &&
+      bubble.x + 258 > targetRect.x &&
+      bubble.y < targetRect.y + targetRect.h &&
+      bubble.y + 74 > targetRect.y - 24;
+    expect(overlapsTarget).toBe(false);
+    expect(bubble.x).toBeGreaterThanOrEqual(12);
+    expect(bubble.y).toBeGreaterThanOrEqual(12);
   });
 });

@@ -45,8 +45,8 @@ export interface OverlayCanvasProps {
   initialPayload?: StepChangedPayload | null;
 }
 
-const JUMP_DURATION_MS = 440;
-const WANDER_TICK_MS = 4800;
+const JUMP_DURATION_MS = 340;
+const WANDER_TICK_MS = 9000;
 const PREVIEW_TTL_MS = 5500;
 
 export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
@@ -171,13 +171,8 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     const unlistenLivePromise = onLiveSessionEvent((sessionState) => {
       if (!mounted) return;
       setLiveSession(sessionState);
-      if (
-        sessionState.status === "idle" ||
-        sessionState.status === "completed"
-      ) {
-        if (sessionState.status === "idle") {
-          setPayload(null);
-        }
+      if (sessionState.status === "idle") {
+        setPayload(null);
       }
     });
 
@@ -215,7 +210,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     };
   }, []);
 
-  // Gentle wander ticker when Screen Day / wander mode is active without a locked target
+  // Calm perch ticker when Screen Day / wander mode is active without a locked target
   const isScreendayRecording = Boolean(
     companionOverlay && companionOverlay.mode !== "preview"
       ? companionOverlay.screenday_recording
@@ -258,7 +253,10 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   );
 
   const highContrast = payload?.high_contrast ?? highContrastSetting;
-  const accentColor = highContrast ? "#FACC15" : "#38BDF8";
+  const borderColor = highContrast ? "#FACC15" : "rgba(255, 255, 255, 0.92)";
+  const boxHalo = highContrast
+    ? "0 0 0 1px rgba(0, 0, 0, 0.75), 0 8px 24px rgba(0, 0, 0, 0.45)"
+    : "0 0 0 1px rgba(0, 0, 0, 0.65), 0 8px 24px rgba(0, 0, 0, 0.45)";
 
   const showMagnifier = shouldAutoMagnify(
     physicalRect,
@@ -275,7 +273,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
           (step as { screenshot_path?: string } | null)?.screenshot_path,
       );
 
-  // Draw glowing box & 2.5x magnifier on the 2D canvas
+  // Draw crisp monochrome box & 2.5x magnifier on the 2D canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -291,10 +289,10 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     if (!rect || !physicalRect) return;
 
     ctx.save();
-    ctx.strokeStyle = accentColor;
-    ctx.lineWidth = highContrast ? 3 : 2.5;
-    ctx.shadowColor = accentColor;
-    ctx.shadowBlur = highContrast ? 16 : 12;
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = highContrast ? 2.5 : 1.5;
+    ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
+    ctx.shadowBlur = 8;
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.restore();
 
@@ -314,7 +312,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         ctx.closePath();
         ctx.clip();
 
-        ctx.fillStyle = "#09090B";
+        ctx.fillStyle = "#111215";
         ctx.fillRect(
           mag.lensCx - mag.radius,
           mag.lensCy - mag.radius,
@@ -336,22 +334,22 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
           );
         }
 
-        ctx.strokeStyle = accentColor;
+        ctx.strokeStyle = borderColor;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(mag.lensCx - 8, mag.lensCy);
-        ctx.lineTo(mag.lensCx + 8, mag.lensCy);
-        ctx.moveTo(mag.lensCx, mag.lensCy - 8);
-        ctx.lineTo(mag.lensCx, mag.lensCy + 8);
+        ctx.moveTo(mag.lensCx - 7, mag.lensCy);
+        ctx.lineTo(mag.lensCx + 7, mag.lensCy);
+        ctx.moveTo(mag.lensCx, mag.lensCy - 7);
+        ctx.lineTo(mag.lensCx, mag.lensCy + 7);
         ctx.stroke();
         ctx.restore();
 
         ctx.save();
         ctx.beginPath();
         ctx.arc(mag.lensCx, mag.lensCy, mag.radius, 0, Math.PI * 2);
-        ctx.strokeStyle = accentColor;
-        ctx.lineWidth = 2.5;
-        ctx.shadowColor = accentColor;
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
         ctx.shadowBlur = 10;
         ctx.stroke();
         ctx.restore();
@@ -379,7 +377,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     rect,
     physicalRect,
     viewport,
-    accentColor,
+    borderColor,
     highContrast,
     showMagnifier,
     captureSrc,
@@ -421,8 +419,8 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
 
     if (companionOverlay?.x != null && companionOverlay?.y != null) {
       const x = Math.max(
-        6,
-        Math.min(viewport.w - companionSize - 6, companionOverlay.x),
+        12,
+        Math.min(viewport.w - companionSize - 12, companionOverlay.x),
       );
       const y = Math.max(
         12,
@@ -437,8 +435,8 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
 
     if (isPreview) {
       return {
-        x: Math.max(16, viewport.w - companionSize - 96),
-        y: Math.max(16, viewport.h - companionSize - 110),
+        x: Math.max(16, viewport.w - companionSize - 64),
+        y: Math.max(16, viewport.h - companionSize - 92),
         facing: "left" as const,
       };
     }
@@ -468,7 +466,6 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     wanderTick,
   ]);
 
-  // Smooth parabolic arc jump whenever target position changes cleanly
   const targetKey =
     rect && physicalRect
       ? `step:${Math.round(targetCompanionAnchor.x)},${Math.round(targetCompanionAnchor.y)}`
@@ -504,7 +501,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
       shouldSkipFirstJump ||
       (!startPt && !isPreviewJump) ||
       (startPt &&
-        Math.hypot(endPt.x - startPt.x, endPt.y - startPt.y) < 6 &&
+        Math.hypot(endPt.x - startPt.x, endPt.y - startPt.y) < 4 &&
         !isPreviewJump)
     ) {
       lastSpotRef.current = endPt;
@@ -527,9 +524,9 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     }
 
     const originPt: Point2D = isPreviewJump
-      ? { x: Math.max(12, endPt.x - 140), y: endPt.y }
+      ? { x: Math.max(12, endPt.x - 84), y: endPt.y }
       : startPt ?? {
-          x: endPt.x > viewport.w / 2 ? viewport.w - companionSize - 8 : 8,
+          x: endPt.x,
           y: endPt.y,
         };
 
@@ -586,7 +583,6 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     hasInitialPayload,
     hasRect,
     isPreviewJump,
-    viewport.w,
   ]);
 
   const companionRenderPos = animatedCompanion ?? {
@@ -638,7 +634,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
 
     return (
       (targetCompanionAnchor as { wanderEmotion?: CompanionEmotion })
-        .wanderEmotion ?? "peeking"
+        .wanderEmotion ?? "idle"
     );
   };
 
@@ -664,13 +660,14 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     const stepNum = (payload?.index ?? 0) + 1;
     const totalSteps = Math.max(payload?.total ?? 1, stepNum);
     const stepLabel =
-      rect && physicalRect ? `Step ${stepNum}/${totalSteps}` : null;
+      rect && physicalRect ? `${stepNum} / ${totalSteps}` : null;
 
     const bubblePos = computeBubblePosition(
       { x: companionRenderPos.x, y: companionRenderPos.y },
       companionSize,
       { w: 258, h: 74 },
       viewport,
+      rect,
     );
 
     return (
@@ -682,12 +679,13 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
           data-testid="overlay-companion-stage"
           data-in-flight={companionRenderPos.inFlight ? "true" : "false"}
           style={{
-            left: `${Math.round(companionRenderPos.x)}px`,
-            top: `${Math.round(companionRenderPos.y)}px`,
+            left: "0px",
+            top: "0px",
             width: `${companionSize}px`,
             height: `${companionSize}px`,
-            transform: `scale(${companionRenderPos.scaleX.toFixed(3)}, ${companionRenderPos.scaleY.toFixed(3)}) rotate(${companionRenderPos.rotationDeg.toFixed(1)}deg)`,
+            transform: `translate3d(${Math.round(companionRenderPos.x)}px, ${Math.round(companionRenderPos.y)}px, 0) scale(${companionRenderPos.scaleX.toFixed(3)}, ${companionRenderPos.scaleY.toFixed(3)}) rotate(${companionRenderPos.rotationDeg.toFixed(2)}deg)`,
             transformOrigin: "center bottom",
+            willChange: "transform",
           }}
           className="absolute pointer-events-none"
         >
@@ -702,9 +700,9 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
           {isScreendayRecording && !rect && (
             <div
               data-testid="screenday-companion-indicator"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#090B10]/90 border border-rose-500/40 text-[9px] font-semibold text-rose-300 shadow"
+              className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#111215]/90 border border-white/15 text-[9.5px] font-medium text-[#A1A1AA] shadow"
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[#E4E4E7]" />
               Diary
             </div>
           )}
@@ -713,8 +711,10 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         {(bubbleText || step?.shortcut || (isScreendayRecording && isPreview)) && (
           <div
             style={{
-              left: `${bubblePos.x}px`,
-              top: `${bubblePos.y}px`,
+              left: "0px",
+              top: "0px",
+              transform: `translate3d(${bubblePos.x}px, ${bubblePos.y}px, 0)`,
+              willChange: "transform",
             }}
             className="absolute pointer-events-none"
           >
@@ -785,7 +785,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         className="absolute inset-0 w-full h-full pointer-events-none"
       />
 
-      {/* Glowing pulsing bounding box DOM element for crisp CSS animation & accessibility */}
+      {/* Crisp monochrome bounding box with dark outer halo */}
       <div
         data-testid="overlay-highlight-box"
         data-high-contrast={highContrast ? "true" : "false"}
@@ -794,24 +794,26 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
           top: `${rect.y}px`,
           width: `${rect.w}px`,
           height: `${rect.h}px`,
-          borderColor: accentColor,
-          boxShadow: `0 0 12px ${accentColor}, inset 0 0 6px ${accentColor}40`,
+          borderWidth: highContrast ? "2px" : "1.5px",
+          borderStyle: "solid",
+          borderColor,
+          boxShadow: boxHalo,
         }}
-        className="gl-pulse-box absolute rounded-md border-2 pointer-events-none"
+        className="absolute rounded-md pointer-events-none"
       />
 
-      {/* Step Badge anchored to top-left corner of the glowing box */}
+      {/* Compact neutral step chip anchored cleanly beside the highlight box */}
       <div
         data-testid="overlay-step-badge"
         style={{
           left: `${badgePos.x}px`,
           top: `${badgePos.y}px`,
-          backgroundColor: accentColor,
-          color: "#0F172A",
+          borderColor: highContrast ? "#FACC15" : "rgba(255, 255, 255, 0.15)",
+          color: highContrast ? "#FACC15" : "#A1A1AA",
         }}
-        className="absolute px-2.5 py-0.5 rounded-full text-[12px] font-bold tracking-tight shadow-lg pointer-events-none"
+        className="absolute px-2 py-0.5 rounded-md bg-[#111215]/90 border text-[10px] font-medium tracking-tight shadow-md backdrop-blur-md pointer-events-none tabular-nums"
       >
-        Step {stepNum} of {totalSteps}
+        {stepNum} / {totalSteps}
       </div>
 
       {/* 2.5x Circular Magnifier Lens */}
@@ -824,8 +826,10 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
             top: `${magGeom.lensCy - magGeom.radius}px`,
             width: `${lensDiameter}px`,
             height: `${lensDiameter}px`,
-            borderColor: accentColor,
-            boxShadow: `0 4px 20px rgba(0, 0, 0, 0.65), 0 0 12px ${accentColor}80`,
+            borderWidth: "1.5px",
+            borderStyle: "solid",
+            borderColor,
+            boxShadow: boxHalo,
             backgroundImage: captureSrc ? `url("${captureSrc}")` : undefined,
             backgroundRepeat: "no-repeat",
             backgroundSize: captureSrc
@@ -833,12 +837,20 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
               : undefined,
             backgroundPosition: `-${magGeom.sx * cssBgScale}px -${magGeom.sy * cssBgScale}px`,
           }}
-          className="absolute rounded-full border-2 bg-[#09090B]/90 overflow-hidden pointer-events-none flex items-center justify-center"
+          className="absolute rounded-full bg-[#111215]/90 overflow-hidden pointer-events-none flex items-center justify-center"
         >
           <span
             data-testid="magnifier-zoom-badge"
-            style={{ backgroundColor: accentColor, color: "#0F172A" }}
-            className="absolute bottom-1 px-1.5 py-0.2 rounded text-[10px] font-bold"
+            style={
+              highContrast
+                ? { backgroundColor: "#FACC15", color: "#09090B" }
+                : undefined
+            }
+            className={`absolute bottom-1 px-1.5 py-0.2 rounded text-[10px] font-semibold ${
+              highContrast
+                ? ""
+                : "bg-[#111215]/90 border border-white/15 text-[#F4F4F5]"
+            }`}
           >
             {magGeom.zoom}×
           </span>

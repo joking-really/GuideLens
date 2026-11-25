@@ -404,50 +404,41 @@ describe("FloatingBar", () => {
     delete (window as unknown as { MediaRecorder?: unknown }).MediaRecorder;
   });
 
-  it("renders sleek obsidian capsule pill with companion badge, focuses input on bar-summoned, and cycles brain modes", async () => {
+  it("renders sleek minimalist obsidian capsule with companion badge, focuses input on bar-summoned, and opens Control Center", async () => {
     const user = userEvent.setup();
     render(<FloatingBar initialSettings={{ onboarding_complete: true, brain_mode: "local_vlm" }} />);
 
     const bar = screen.getByTestId("floating-bar");
     expect(bar).toHaveAttribute("data-tauri-drag-region");
     expect(bar.className).toContain("backdrop-blur-2xl");
-    expect(bar.className).toContain("rounded-full");
+    expect(bar.className).toContain("rounded-2xl");
     expect(bar.className).toContain("w-[620px]");
-    expect(bar.className).toContain("h-[54px]");
+    expect(bar.className).toContain("h-[50px]");
 
     // Mini companion sprite badge renders inside capsule
     const companionBadge = screen.getByTestId("capsule-companion-badge");
     expect(companionBadge).toBeInTheDocument();
     expect(screen.getByTestId("companion-sprite")).toHaveAttribute("data-companion", "pixel_cat");
 
+    // Loud neon Auto pill & duplicate speaker button are stripped
+    expect(screen.queryByTestId("brain-mode-pill")).toBeNull();
+    expect(screen.queryByTestId("tts-mute-toggle")).toBeNull();
+
     const input = screen.getByTestId("bar-query-input");
-    const pill = screen.getByTestId("brain-mode-pill");
-    expect(pill).toHaveTextContent("Local");
+    expect(input).toHaveAttribute("placeholder", "Ask anything...");
 
     // Blur input then summon bar
-    pill.focus();
-    expect(document.activeElement).toBe(pill);
+    const settingsBtn = screen.getByTestId("open-settings-btn");
+    settingsBtn.focus();
+    expect(document.activeElement).toBe(settingsBtn);
 
     await act(async () => {
       mocks.emitMockEvent("bar-summoned", {});
     });
     expect(document.activeElement).toBe(input);
 
-    // Cycle brains: Local -> BYO: Groq -> Groq Pro -> Agent: Claude -> Auto
-    await user.click(pill);
-    expect(pill).toHaveTextContent("BYO: Groq");
-
-    await user.click(pill);
-    expect(pill).toHaveTextContent("Groq Pro");
-
-    await user.click(pill);
-    expect(pill).toHaveTextContent("Agent: Claude");
-
-    await user.click(pill);
-    expect(pill).toHaveTextContent("Auto");
-
-    // Clicking Control Center opens the dedicated GuideLens Control Center window (no inline drawer)
-    await user.click(screen.getByTestId("open-settings-btn"));
+    // Clicking Control Center icon opens the dedicated GuideLens Control Center window (no inline drawer)
+    await user.click(settingsBtn);
     expect(screen.queryByTestId("settings-view")).toBeNull();
     expect(mocks.createdWindows[0]).toMatchObject({
       label: "settings",
@@ -555,7 +546,7 @@ describe("FloatingBar", () => {
       text: "git reset --soft HEAD~1",
     });
     expect(copyBtn).toHaveTextContent("Copied!");
-    expect(copyBtn.className).toContain("#22C55E");
+    expect(copyBtn).toHaveAttribute("aria-label", "Command copied");
   });
 
   it("shows Groq timeout fallback prompt and retries with Local VLM on click", async () => {
@@ -586,7 +577,7 @@ describe("FloatingBar", () => {
     });
   });
 
-  it("warm-loads voice engine, persists speaker mute toggle, and stops playback when clicked while speaking", async () => {
+  it("warm-loads voice engine and stops active TTS playback on Escape/overlay-cleared", async () => {
     vi.useFakeTimers();
     render(
       <FloatingBar
@@ -602,26 +593,14 @@ describe("FloatingBar", () => {
     });
     expect(mocks.voiceEngine.load).toHaveBeenCalledTimes(1);
 
-    const speakerBtn = screen.getByTestId("tts-mute-toggle");
-    expect(speakerBtn).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByTestId("tts-speaking-pulse")).toBeNull();
-
     await act(async () => {
       mocks.voiceEngine.emitState({ status: "speaking", speaking: true });
     });
-    expect(screen.getByTestId("tts-speaking-pulse")).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(speakerBtn);
+      mocks.emitMockEvent("overlay-cleared", {});
     });
     expect(mocks.voiceEngine.stop).toHaveBeenCalled();
-    expect(speakerBtn).toHaveAttribute("aria-pressed", "false");
-    expect(mocks.invoke).toHaveBeenCalledWith(
-      "set_settings",
-      expect.objectContaining({
-        s: expect.objectContaining({ tts_enabled: false }),
-      }),
-    );
   });
 
   it("deduplicates step 0 speech across ask() + step-changed, speaks errors, and stops on Escape/overlay-cleared", async () => {
@@ -865,7 +844,12 @@ describe("FloatingBar", () => {
     // 5. "mute" mutes TTS locally without calling ask()
     await emitTranscript("mute");
     await waitFor(() => {
-      expect(screen.getByTestId("tts-mute-toggle")).toHaveAttribute("aria-pressed", "false");
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "set_settings",
+        expect.objectContaining({
+          s: expect.objectContaining({ tts_enabled: false }),
+        }),
+      );
     });
     expect(mocks.invoke).not.toHaveBeenCalledWith("ask", expect.anything());
 

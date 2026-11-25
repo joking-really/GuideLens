@@ -365,14 +365,22 @@ describe("AdminHub Control Center", () => {
     window.history.pushState({}, "", "/");
   });
 
-  it("renders AdminHub Overview on /hub route with live latency telemetry, Live Session start/stop, and Screen Day toggle", async () => {
+  it("renders minimalist AdminHub Overview on /hub route with calm header, Live Session, Screen Day, and 3-column metrics", async () => {
     const user = userEvent.setup();
     window.history.pushState({}, "", "/hub");
     render(<App />);
 
     expect(await screen.findByTestId("panel-overview")).toBeInTheDocument();
-    expect(await screen.findByTestId("topbar-brain-latency-pill")).toHaveTextContent("258ms");
-    expect(screen.getByTestId("latency-telemetry-card")).toHaveTextContent("Avg Total: 258 ms");
+    expect(await screen.findByTestId("topbar-status-summary")).toHaveTextContent("258ms");
+    expect(screen.getByTestId("panel-overview")).toHaveTextContent("Avg Response");
+    expect(screen.getByTestId("panel-overview")).toHaveTextContent("258 ms");
+    expect(screen.getByTestId("panel-overview")).toHaveTextContent("Frames Today");
+    expect(screen.getByTestId("panel-overview")).toHaveTextContent("Learned Paths");
+
+    // Cluttered 5-pill header & duplicate history link & unauthenticated account block are removed
+    expect(screen.queryByTestId("topbar-test-peek-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tab-history")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tab-account")).not.toBeInTheDocument();
 
     // Start & stop Live Session
     await user.type(screen.getByTestId("live-goal-input"), "Debug Rust build");
@@ -388,18 +396,12 @@ describe("AdminHub Control Center", () => {
       expect(screen.getByTestId("live-session-status-badge")).toHaveTextContent("completed");
     });
 
-    // Screen Day toggle + Test Overlay Peek
-    await user.click(screen.getByTestId("topbar-screenday-toggle"));
+    // Screen Day toggle + Capture Now
+    await user.click(screen.getByTestId("overview-screenday-toggle"));
     expect(mocks.invoke).toHaveBeenCalledWith("screenday_set_enabled", { enabled: true });
-
-    await user.click(screen.getByTestId("topbar-test-peek-btn"));
-    expect(mocks.invoke).toHaveBeenCalledWith(
-      "preview_companion",
-      expect.objectContaining({ companionId: "pixel_cat", emotion: "peeking" }),
-    );
   });
 
-  it("navigates across Diary, Knowledge Graph, Companions & Voice, Brains, and Privacy tabs", async () => {
+  it("navigates across Diary, Knowledge Graph, Companions & Voice, Brains segmented sub-tabs, and Settings", async () => {
     const user = userEvent.setup();
     render(
       <AdminHub
@@ -408,12 +410,15 @@ describe("AdminHub Control Center", () => {
       />,
     );
 
-    // 1. Diary tab: projects, meetings OCR topics, .graph.md modal, Nightly Wrap-Up
+    // 1. Diary tab: projects, meetings OCR topics, .graph.md modal, Generate Summary, collapsible Guided History
     await user.click(screen.getByTestId("tab-diary"));
     expect(await screen.findByTestId("screenday-projects-section")).toHaveTextContent("GuideLens");
     expect(screen.getByTestId("screenday-meetings-section")).toHaveTextContent(
       "Q4 Latency Targets: <200ms grounding",
     );
+    expect(screen.queryByTestId("history-session-list")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("toggle-guided-history-btn"));
+    expect(screen.getByTestId("panel-history")).toHaveTextContent("Guided Session History");
 
     await user.click(screen.getByTestId("open-day-graph-modal-btn"));
     expect(screen.getByRole("dialog")).toHaveTextContent("flowchart LR");
@@ -466,7 +471,7 @@ describe("AdminHub Control Center", () => {
       }),
     );
 
-    // 4. Brains & Agents tab: OpenRouter preset, split routing, testBrainConnection
+    // 4. Models & Agents tab: 3 segmented sub-tabs, OpenRouter preset, CLI list, Local & Routing, Test Connection
     await user.click(screen.getByTestId("tab-brains"));
     await user.click(screen.getByTestId("openrouter-preset-google/gemma-3-27b-it"));
     expect(mocks.invoke).toHaveBeenCalledWith(
@@ -479,10 +484,16 @@ describe("AdminHub Control Center", () => {
       }),
     );
 
+    await user.click(screen.getByTestId("brains-subtab-clis"));
+    expect(screen.getByTestId("agent-cli-list")).toHaveTextContent("Detected");
+
+    await user.click(screen.getByTestId("brains-subtab-local"));
+    expect(screen.getByTestId("ollama-running-badge")).toHaveTextContent("Running");
+
     await user.click(screen.getByTestId("test-brain-connection-btn"));
     expect(await screen.findByTestId("connection-test-result")).toHaveTextContent("142 ms");
 
-    // 5. Privacy & System tab: excluded apps chip, interval slider, skip private
+    // 5. Settings (Privacy & System) tab: excluded apps chip, interval slider
     await user.click(screen.getByTestId("tab-privacy"));
     await user.type(screen.getByTestId("excluded-app-input"), "1password.exe");
     await user.click(screen.getByTestId("add-excluded-app-btn"));

@@ -12,7 +12,6 @@ import { VoiceStudio } from "../components/VoiceStudio";
 import { previewCompanion } from "../lib/ipc";
 import { getCopilotVoiceEngine } from "../lib/tinyVocaClient";
 import type { CompanionId, Settings } from "../types";
-import { CompanionIcon, EyeIcon, PlayIcon } from "./HubIcons";
 
 export interface CompanionsVoiceTabProps {
   settings: Settings;
@@ -31,42 +30,42 @@ const STAGE_ACTIONS: ReadonlyArray<{
     label: "Jump",
     emotion: "jumping",
     actionKind: null,
-    bubble: "Leaping right to the target button!",
-  },
-  {
-    id: "bonk",
-    label: "Bonk",
-    emotion: "bonk",
-    actionKind: "bonk",
-    bubble: "Bonk! Did that window just move?",
+    bubble: "Moving to target control.",
   },
   {
     id: "peek",
     label: "Peek",
     emotion: "peeking",
     actionKind: null,
-    bubble: "Peeking from the edge while Screen Day watches.",
-  },
-  {
-    id: "celebrate",
-    label: "Celebrate",
-    emotion: "celebrate",
-    actionKind: null,
-    bubble: "Step complete! Nice work!",
+    bubble: "Observing while Screen Day is active.",
   },
   {
     id: "point",
     label: "Point",
     emotion: "pointing",
     actionKind: "click",
-    bubble: "Click right here!",
+    bubble: "Select this element.",
+  },
+  {
+    id: "bonk",
+    label: "Bonk",
+    emotion: "bonk",
+    actionKind: "bonk",
+    bubble: "Window shifted — re-grounding.",
+  },
+  {
+    id: "celebrate",
+    label: "Celebrate",
+    emotion: "celebrate",
+    actionKind: null,
+    bubble: "Step complete.",
   },
   {
     id: "type",
     label: "Type",
     emotion: "typing",
     actionKind: "type",
-    bubble: "Typing into this field...",
+    bubble: "Entering text…",
   },
 ];
 
@@ -82,7 +81,7 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
   const [stageFacing, setStageFacing] = useState<"left" | "right">("right");
   const [stageBubble, setStageBubble] = useState<string>(
     getCompanionPersona(settings.companion_id).idleWhisper ||
-      "Ready to guide your screen!",
+      "Ready to guide your screen.",
   );
   const [previewBusy, setPreviewBusy] = useState(false);
 
@@ -96,11 +95,11 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
     if (id !== "none") {
       setStageEmotion("celebrate");
       setStageActionKind(null);
-      setStageBubble(persona.idleWhisper || `Hi! I'm ${persona.name}.`);
+      setStageBubble(persona.idleWhisper || `Hi, I'm ${persona.name}.`);
       void previewCompanion(id, "celebrate", persona.idleWhisper);
     } else {
       setStageEmotion("idle");
-      setStageBubble("Overlay companion hidden (stealth mode).");
+      setStageBubble("Overlay companion hidden.");
       void previewCompanion("none", "idle", null);
     }
   };
@@ -125,7 +124,7 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
     }
     const text =
       activePersona.idleWhisper ||
-      `Hello! I'm ${activePersona.name}, your GuideLens copilot.`;
+      `Hello. I'm ${activePersona.name}, your GuideLens copilot.`;
     setStageEmotion("celebrate");
     setStageBubble(text);
     try {
@@ -141,23 +140,18 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
 
   return (
     <div className="space-y-5" data-testid="panel-companions">
-      {/* Companion Selector + Live Stage */}
+      {/* Companion Picker + Quiet Preview Stage */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left: 4 Persona Cards + Stealth Option */}
-        <section className="lg:col-span-7 rounded-2xl bg-[#11141D]/90 border border-white/[0.08] p-5 space-y-4">
+        {/* Left: 4 Persona Cards + Hidden */}
+        <section className="lg:col-span-7 rounded-xl bg-[#111317] border border-white/[0.07] p-5 space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-pink-500/15 border border-pink-400/30 flex items-center justify-center text-pink-300">
-                <CompanionIcon className="w-4 h-4" />
-              </div>
-              <div>
-                <h2 className="text-[14px] font-semibold text-zinc-100">
-                  Interactive Companion Studio
-                </h2>
-                <p className="text-[11.5px] text-zinc-400">
-                  Pick your animated desktop sprite that leaps to UI targets and peeks while recording
-                </p>
-              </div>
+            <div>
+              <h2 className="text-[14px] font-semibold text-[#F4F4F5]">
+                Companion
+              </h2>
+              <p className="text-[12px] text-[#8E929B] mt-0.5">
+                Minimal desktop guide that tracks active UI targets
+              </p>
             </div>
 
             <button
@@ -166,15 +160,15 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
               onClick={() => void handleSelectCompanion("none")}
               className={`px-2.5 py-1 rounded-lg text-[11.5px] border transition-colors ${
                 settings.companion_id === "none"
-                  ? "bg-amber-500/20 border-amber-400/50 text-amber-200 font-semibold"
-                  : "bg-white/[0.04] border-white/10 text-zinc-400 hover:text-zinc-200"
+                  ? "bg-[#F4F4F5] border-[#F4F4F5] text-[#0A0B0D] font-medium"
+                  : "bg-white/[0.04] border-white/[0.08] text-[#8E929B] hover:text-[#F4F4F5]"
               }`}
             >
               {COMPANION_PERSONAS.none.label}
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {VISIBLE_COMPANIONS.map((persona) => {
               const selected = settings.companion_id === persona.id;
               return (
@@ -184,38 +178,32 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
                   data-testid={`companion-card-${persona.id}`}
                   aria-pressed={selected}
                   onClick={() => void handleSelectCompanion(persona.id)}
-                  className={`text-left rounded-2xl p-3.5 border transition-all flex items-start gap-3 ${
+                  className={`text-left rounded-xl p-3.5 border transition-colors flex items-start gap-3 ${
                     selected
-                      ? "bg-sky-400/12 border-sky-400 shadow-lg shadow-sky-500/10"
-                      : "bg-[#090B10]/85 border-white/10 hover:border-white/25"
+                      ? "bg-[#17191E] border-white/30"
+                      : "bg-[#0A0B0D] border-white/[0.07] hover:bg-[#17191E]"
                   }`}
                 >
-                  <div className="shrink-0 w-14 h-14 rounded-xl bg-[#11141D] border border-white/10 flex items-center justify-center overflow-hidden">
+                  <div className="shrink-0 w-12 h-12 rounded-lg bg-[#111317] border border-white/[0.07] flex items-center justify-center overflow-hidden">
                     <CompanionSprite
                       companionId={persona.id}
                       emotion={selected ? "celebrate" : "idle"}
-                      size={48}
+                      size={40}
                     />
                   </div>
-                  <div className="min-w-0 space-y-1">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center justify-between gap-1.5">
-                      <span className="text-[13.5px] font-bold text-zinc-100 truncate">
+                      <span className="text-[13px] font-semibold text-[#F4F4F5] truncate">
                         {persona.name}
                       </span>
-                      <span
-                        style={{
-                          borderColor: `${persona.accentColor}55`,
-                          color: persona.accentColor,
-                        }}
-                        className="px-1.5 py-0.5 rounded text-[10px] font-medium border bg-white/[0.03] shrink-0"
-                      >
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono border border-white/[0.07] bg-white/[0.03] text-[#8E929B] shrink-0">
                         {persona.defaultVoice} · {persona.defaultSpeed}×
                       </span>
                     </div>
-                    <div className="text-[11px] font-medium text-sky-300">
+                    <div className="text-[11.5px] text-[#E4E4E7]">
                       {persona.tagline}
                     </div>
-                    <p className="text-[11px] text-zinc-400 line-clamp-2 leading-snug">
+                    <p className="text-[11px] text-[#5C606A] line-clamp-2 leading-snug">
                       {persona.description}
                     </p>
                   </div>
@@ -224,18 +212,15 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
             })}
           </div>
 
-          {/* Companion Behavior Toggle */}
-          <label className="flex items-center justify-between gap-3 rounded-xl bg-[#090B10]/85 border border-white/[0.08] px-4 py-3 cursor-pointer">
-            <div className="flex items-center gap-2.5">
-              <EyeIcon className="w-4 h-4 text-emerald-300 shrink-0" />
-              <div>
-                <span className="block text-[12.5px] font-semibold text-zinc-100">
-                  Peek &amp; wander while Screen Day is on
-                </span>
-                <span className="block text-[11px] text-zinc-400">
-                  Companion gently walks along your taskbar and peeks from the edge when recording your day
-                </span>
-              </div>
+          {/* Calm Perch / Wander Toggle */}
+          <label className="flex items-center justify-between gap-3 rounded-lg bg-[#0A0B0D] border border-white/[0.07] px-4 py-3 cursor-pointer">
+            <div>
+              <span className="block text-[12.5px] font-medium text-[#F4F4F5]">
+                Idle perch while Screen Day is on
+              </span>
+              <span className="block text-[11.5px] text-[#8E929B]">
+                Companion rests calmly above the taskbar while recording
+              </span>
             </div>
             <input
               type="checkbox"
@@ -244,20 +229,21 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
               onChange={(e) =>
                 void onUpdateSettings({ companion_wander: e.target.checked })
               }
+              className="accent-[#F4F4F5]"
             />
           </label>
         </section>
 
-        {/* Right: Live Animated Stage */}
-        <section className="lg:col-span-5 rounded-2xl bg-[#11141D]/90 border border-white/[0.08] p-5 flex flex-col justify-between gap-4">
+        {/* Right: Quiet Preview Stage */}
+        <section className="lg:col-span-5 rounded-xl bg-[#111317] border border-white/[0.07] p-5 flex flex-col justify-between gap-4">
           <div className="flex items-center justify-between gap-2">
             <div>
-              <h3 className="text-[13.5px] font-semibold text-zinc-100">
-                Live Animation Stage
+              <h3 className="text-[13.5px] font-semibold text-[#F4F4F5]">
+                Preview Stage
               </h3>
-              <p className="text-[11px] text-zinc-400">
-                Previewing {activePersona.label} ·{" "}
-                <span className="font-mono text-sky-300">{stageEmotion}</span>
+              <p className="text-[11.5px] text-[#8E929B]">
+                {activePersona.name} ·{" "}
+                <span className="font-mono text-[#5C606A]">{stageEmotion}</span>
               </p>
             </div>
             <button
@@ -265,25 +251,19 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
               onClick={() =>
                 setStageFacing((f) => (f === "right" ? "left" : "right"))
               }
-              className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-zinc-300"
+              className="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-[11px] text-[#E4E4E7] transition-colors"
             >
               Face: {stageFacing}
             </button>
           </div>
 
-          {/* Stage Backdrop */}
+          {/* Stage Viewport */}
           <div
             data-testid="companion-live-stage"
-            className="relative rounded-2xl bg-[#090B10] border border-white/10 p-5 flex flex-col items-center justify-center min-h-[190px] overflow-hidden"
+            className="relative rounded-lg bg-[#0A0B0D] border border-white/[0.07] p-5 flex flex-col items-center justify-center min-h-[185px] overflow-hidden"
           >
-            <div
-              style={{
-                background: `radial-gradient(circle at 50% 45%, ${activePersona.accentColor}22, transparent 70%)`,
-              }}
-              className="absolute inset-0 pointer-events-none"
-            />
             {stageBubble && (
-              <div className="relative z-10 mb-3 max-w-[260px] rounded-xl bg-[#161B26]/95 border border-white/15 px-3 py-1.5 text-[11.5px] text-zinc-100 text-center shadow-lg">
+              <div className="relative z-10 mb-3 max-w-[250px] rounded-lg bg-[#111317] border border-white/[0.08] px-3 py-1.5 text-[11.5px] text-[#E4E4E7] text-center">
                 {stageBubble}
               </div>
             )}
@@ -293,14 +273,14 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
                 emotion={stageEmotion}
                 actionKind={stageActionKind}
                 facing={stageFacing}
-                size={96}
+                size={88}
               />
             </div>
           </div>
 
-          {/* Reaction Trigger Buttons */}
-          <div className="space-y-2.5">
-            <div className="grid grid-cols-3 gap-2">
+          {/* Quiet Ghost Reaction Buttons */}
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-1.5">
               {STAGE_ACTIONS.map((action) => (
                 <button
                   key={action.id}
@@ -308,10 +288,10 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
                   data-testid={`companion-react-${action.id}`}
                   disabled={previewBusy}
                   onClick={() => void handleTriggerReaction(action)}
-                  className={`px-2.5 py-1.5 rounded-xl border text-[12px] font-medium transition-colors ${
+                  className={`px-2.5 py-1.5 rounded-lg border text-[12px] font-medium transition-colors ${
                     stageEmotion === action.emotion
-                      ? "bg-sky-400/20 border-sky-400 text-sky-200"
-                      : "bg-[#090B10]/85 border-white/10 text-zinc-300 hover:bg-white/[0.06]"
+                      ? "bg-[#17191E] border-white/25 text-[#F4F4F5]"
+                      : "bg-white/[0.04] border-white/[0.08] text-[#8E929B] hover:bg-white/[0.08] hover:text-[#F4F4F5]"
                   }`}
                 >
                   {action.label}
@@ -324,10 +304,9 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
                 type="button"
                 data-testid="companion-speak-greeting-btn"
                 onClick={() => void handleSpeakGreeting()}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/10 text-[12px] font-medium text-zinc-100"
+                className="flex-1 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-[12px] font-medium text-[#E4E4E7] transition-colors"
               >
-                <PlayIcon className="w-3.5 h-3.5 text-sky-300" />
-                Speak Persona Cue
+                Speak
               </button>
               <button
                 type="button"
@@ -339,7 +318,7 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
                     tts_pitch_shift: activePersona.defaultPitchShift,
                   })
                 }
-                className="px-3 py-1.5 rounded-xl bg-sky-400/15 hover:bg-sky-400/25 border border-sky-400/40 text-[12px] font-medium text-sky-200"
+                className="px-3 py-1.5 rounded-lg bg-[#F4F4F5] hover:bg-white text-[#0A0B0D] text-[12px] font-medium transition-colors"
               >
                 Sync Voice Preset
               </button>
@@ -348,7 +327,7 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
         </section>
       </div>
 
-      {/* Embedded VoiceStudio (Preserves data-testid="panel-voice" and all VoiceStudio testids) */}
+      {/* Embedded VoiceStudio */}
       <div data-testid="panel-voice">
         <VoiceStudio settings={settings} onUpdateSettings={onUpdateSettings} />
       </div>

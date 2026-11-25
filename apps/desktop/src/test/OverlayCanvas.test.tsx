@@ -80,7 +80,7 @@ describe("OverlayCanvas", () => {
     expect(screen.queryByTestId("overlay-highlight-box")).toBeNull();
   });
 
-  it("renders glowing cyan box (#38BDF8), step badge, and clears on overlay-cleared", async () => {
+  it("renders crisp monochrome white highlight box, compact step chip, and clears on overlay-cleared", async () => {
     render(<OverlayCanvas />);
     expect(screen.getByTestId("overlay-empty")).toBeInTheDocument();
 
@@ -106,10 +106,13 @@ describe("OverlayCanvas", () => {
       top: "180px",
       width: "32px",
       height: "32px",
-      borderColor: "#38BDF8",
+      borderColor: "rgba(255, 255, 255, 0.92)",
     });
     expect(screen.getByTestId("overlay-step-badge")).toHaveTextContent(
-      "Step 1 of 4",
+      "1 / 4",
+    );
+    expect(screen.getByTestId("companion-speech-bubble")).toHaveTextContent(
+      "1 / 4",
     );
     expect(screen.queryByTestId("overlay-magnifier-lens")).toBeNull();
 
