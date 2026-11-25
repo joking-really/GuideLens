@@ -3,11 +3,100 @@ use crate::types::{
     MonitorInfo, OverlayCompanionPayload, RectPx, ResolvedStep, StepChangedPayload, StepMode,
     StepSource,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
 static OVERLAY_EXCLUDED_FROM_CAPTURE: AtomicBool = AtomicBool::new(false);
+static COMPANION_ONLY_MODE: AtomicBool = AtomicBool::new(false);
+static CUE_GENERATION: AtomicU64 = AtomicU64::new(0);
+static CURSOR_EMITTER_STARTED: AtomicBool = AtomicBool::new(false);
+
+pub const CURSOR_GAZE_THRESHOLD_PX: i32 = 6;
+const CURSOR_GAZE_INTERVAL_MS: u64 = 120;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorGazePayload {
+    pub x: i32,
+    pub y: i32,
+}
+
+/// Returns whether companion-only mode (bar hidden, companion kept visible on screen) is active.
+pub fn is_companion_only_mode() -> bool {
+    COMPANION_ONLY_MODE.load(Ordering::Relaxed)
+}
+
+/// Returns whether a cursor moved at least `threshold_px` (Euclidean) since `last`.
+pub fn has_cursor_moved_enough(
+    last: Option<(i32, i32)>,
+    current: (i32, i32),
+    threshold_px: i32,
+) -> bool {
+    match last {
+        None => true,
+        Some((lx, ly)) => {
+            let dx = i64::from(current.0) - i64::from(lx);
+            let dy = i64::from(current.1) - i64::from(ly);
+            let thresh = i64::from(threshold_px.max(0));
+            dx * dx + dy * dy >= thresh * thresh
+        }
+    }
+}
+
+#[cfg(windows)]
+fn read_cursor_pos() -> Option<(i32, i32)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    unsafe {
+        let mut pt = POINT::default();
+        if GetCursorPos(&mut pt).is_ok() {
+            Some((pt.x, pt.y))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn read_cursor_pos() -> Option<(i32, i32)> {
+    None
+}
+
+/// Starts a lightweight 120ms background cursor gaze emitter that skips work whenever `"overlay"`
+/// is hidden and only emits `"overlay-cursor"` when cursor movement is >= 6px.
+pub fn start_cursor_gaze_emitter(app: AppHandle) {
+    if CURSOR_EMITTER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(CURSOR_GAZE_INTERVAL_MS));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut last_pos: Option<(i32, i32)> = None;
+
+        loop {
+            ticker.tick().await;
+
+            let overlay_visible = app
+                .get_webview_window("overlay")
+                .and_then(|w| w.is_visible().ok())
+                .unwrap_or(false);
+            if !overlay_visible {
+                last_pos = None;
+                continue;
+            }
+
+            if let Some(pos) = read_cursor_pos() {
+                if has_cursor_moved_enough(last_pos, pos, CURSOR_GAZE_THRESHOLD_PX) {
+                    last_pos = Some(pos);
+                    let _ = app.emit("overlay-cursor", CursorGazePayload { x: pos.0, y: pos.1 });
+                }
+            }
+        }
+    });
+}
 
 /// Returns whether the overlay window was successfully excluded from OS screen capture
 /// via `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`.
@@ -421,30 +510,7 @@ fn clear_overlay_visuals_only(app: &AppHandle) {
         .unwrap_or_default();
 
     let _ = app.emit("overlay-cleared", ());
-
-    if !settings.screenday_enabled || settings.companion_id.trim().eq_ignore_ascii_case("none") {
-        if let Some(overlay_win) = app.get_webview_window("overlay") {
-            let _ = overlay_win.hide();
-        }
-    } else {
-        let _ = app.emit(
-            "overlay-companion",
-            OverlayCompanionPayload {
-                mode: if settings.companion_wander {
-                    "wander".to_string()
-                } else {
-                    "idle".to_string()
-                },
-                companion_id: settings.companion_id,
-                emotion: "peeking".to_string(),
-                wander: settings.companion_wander,
-                x: None,
-                y: None,
-                bubble_text: None,
-                screenday_recording: settings.screenday_enabled,
-            },
-        );
-    }
+    sync_companion_with_settings(app, &settings);
 }
 
 /// Immediately clears the active step highlight box while keeping the live companion visible
@@ -551,6 +617,98 @@ pub fn show_terminal_command(
     Ok(())
 }
 
+/// Returns whether the overlay window should remain visible for an idle/companion-only pet.
+pub fn should_keep_overlay_visible(
+    companion_id: &str,
+    screenday_enabled: bool,
+    companion_only: bool,
+) -> bool {
+    !companion_id.trim().eq_ignore_ascii_case("none") && (screenday_enabled || companion_only)
+}
+
+/// Sets companion-only mode (top bar hidden, companion kept visible on screen in `wander` / `play` mode).
+pub fn set_companion_only_mode(app: &AppHandle, on: bool) {
+    COMPANION_ONLY_MODE.store(on, Ordering::SeqCst);
+
+    let settings = app
+        .try_state::<DbState>()
+        .and_then(|db| db.get_settings().ok())
+        .unwrap_or_default();
+
+    let overlay_busy = app
+        .try_state::<OverlayState>()
+        .map(|s| s.is_active())
+        .unwrap_or(false);
+    if overlay_busy {
+        return;
+    }
+
+    if on && !settings.companion_id.trim().eq_ignore_ascii_case("none") {
+        let _ = emit_overlay_companion(
+            app,
+            OverlayCompanionPayload {
+                mode: "wander".to_string(),
+                companion_id: settings.companion_id,
+                emotion: "play".to_string(),
+                wander: settings.companion_wander,
+                x: None,
+                y: None,
+                bubble_text: None,
+                screenday_recording: settings.screenday_enabled,
+            },
+        );
+    } else {
+        sync_companion_with_settings(app, &settings);
+    }
+}
+
+/// Shows a brief, quiet companion bubble cue (e.g. `"Switched to Local"`) and then restores
+/// normal idle/companion-only/hidden state after ~2.4s.
+pub fn show_companion_cue(app: &AppHandle, text: &str) {
+    let settings = app
+        .try_state::<DbState>()
+        .and_then(|db| db.get_settings().ok())
+        .unwrap_or_default();
+    if settings.companion_id.trim().eq_ignore_ascii_case("none") {
+        return;
+    }
+    let overlay_busy = app
+        .try_state::<OverlayState>()
+        .map(|s| s.is_active())
+        .unwrap_or(false);
+    if overlay_busy {
+        return;
+    }
+
+    let gen = CUE_GENERATION.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    let _ = emit_overlay_companion(
+        app,
+        OverlayCompanionPayload {
+            mode: "preview".to_string(),
+            companion_id: settings.companion_id.clone(),
+            emotion: "curious".to_string(),
+            wander: settings.companion_wander,
+            x: None,
+            y: None,
+            bubble_text: Some(text.to_string()),
+            screenday_recording: settings.screenday_enabled,
+        },
+    );
+
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(2400)).await;
+        if CUE_GENERATION.load(Ordering::SeqCst) != gen {
+            return;
+        }
+        let latest = app_clone
+            .try_state::<DbState>()
+            .and_then(|db| db.get_settings().ok())
+            .unwrap_or_default();
+        sync_companion_with_settings(&app_clone, &latest);
+    });
+}
+
 /// Syncs idle companion visibility/peek mode with updated settings when overlay guidance is not active.
 pub fn sync_companion_with_settings(app: &AppHandle, settings: &crate::types::Settings) {
     let overlay_busy = app
@@ -561,7 +719,8 @@ pub fn sync_companion_with_settings(app: &AppHandle, settings: &crate::types::Se
         return;
     }
 
-    if settings.companion_id.trim().eq_ignore_ascii_case("none") || !settings.screenday_enabled {
+    let companion_only = is_companion_only_mode();
+    if !should_keep_overlay_visible(&settings.companion_id, settings.screenday_enabled, companion_only) {
         let _ = app.emit(
             "overlay-companion",
             OverlayCompanionPayload {
@@ -582,13 +741,17 @@ pub fn sync_companion_with_settings(app: &AppHandle, settings: &crate::types::Se
         let _ = emit_overlay_companion(
             app,
             OverlayCompanionPayload {
-                mode: if settings.companion_wander {
+                mode: if companion_only || settings.companion_wander {
                     "wander".to_string()
                 } else {
                     "idle".to_string()
                 },
                 companion_id: settings.companion_id.clone(),
-                emotion: "peeking".to_string(),
+                emotion: if companion_only {
+                    "play".to_string()
+                } else {
+                    "peeking".to_string()
+                },
                 wander: settings.companion_wander,
                 x: None,
                 y: None,
@@ -653,5 +816,22 @@ mod tests {
         assert_eq!(state.current_step(), None);
         assert_eq!(state.target_window(), (0, String::new()));
         assert_ne!(state.guidance_generation(), gen_before);
+    }
+
+    #[test]
+    fn cursor_gaze_threshold_and_companion_only_visibility() {
+        assert_eq!(CURSOR_GAZE_THRESHOLD_PX, 6);
+        assert!(has_cursor_moved_enough(None, (100, 100), 6));
+        assert!(!has_cursor_moved_enough(Some((100, 100)), (100, 100), 6));
+        assert!(!has_cursor_moved_enough(Some((100, 100)), (103, 104), 6)); // dist^2 = 25 < 36
+        assert!(has_cursor_moved_enough(Some((100, 100)), (106, 100), 6)); // dist^2 = 36
+        assert!(has_cursor_moved_enough(Some((100, 100)), (94, 100), 6));
+        assert!(has_cursor_moved_enough(Some((100, 100)), (105, 104), 6)); // dist^2 = 41 >= 36
+
+        assert!(!should_keep_overlay_visible("none", true, true));
+        assert!(!should_keep_overlay_visible("pixel_cat", false, false));
+        assert!(should_keep_overlay_visible("pixel_cat", true, false));
+        assert!(should_keep_overlay_visible("pixel_cat", false, true));
+        assert!(should_keep_overlay_visible("minimal_orb", true, true));
     }
 }

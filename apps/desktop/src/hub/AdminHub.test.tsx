@@ -463,6 +463,18 @@ describe("AdminHub Control Center", () => {
       expect.objectContaining({ companionId: "anime_guide", emotion: "bonk" }),
     );
 
+    await user.click(screen.getByTestId("companion-react-dance"));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "preview_companion",
+      expect.objectContaining({ companionId: "anime_guide", emotion: "dance" }),
+    );
+
+    await user.click(screen.getByTestId("companion-react-play"));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "preview_companion",
+      expect.objectContaining({ companionId: "anime_guide", emotion: "play" }),
+    );
+
     await user.click(screen.getByTestId("companion-wander-toggle"));
     expect(mocks.invoke).toHaveBeenCalledWith(
       "set_settings",
@@ -510,5 +522,27 @@ describe("AdminHub Control Center", () => {
       target: { value: "30" },
     });
     expect(screen.getByTestId("screenday-interval-value")).toHaveTextContent("30s");
+
+    const shortcutsSection = screen.getByTestId("keyboard-shortcuts-section");
+    for (const expectedText of [
+      "Ctrl + Space",
+      "Toggle top bar (companion remains active)",
+      "Ctrl + Alt + H",
+      "Hide / show top bar (Companion-only mode)",
+      "Ctrl + Alt + M",
+      "Toggle Mic On / Off",
+      "Ctrl + Alt + L",
+      "Toggle Live Guidance Session",
+      "Ctrl + Alt + D",
+      "Toggle Screen Day Recording",
+      "Ctrl + Alt + O",
+      "Switch to Use Local (Ollama)",
+      "Ctrl + Alt + A",
+      "Switch to Use Agent (Claude / Codex / Gemini)",
+      "Esc",
+      "Dismiss active step highlight",
+    ]) {
+      expect(shortcutsSection).toHaveTextContent(expectedText);
+    }
   }, 15000);
 });

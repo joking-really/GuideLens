@@ -264,6 +264,9 @@ pub fn run() {
             // Start all-day privacy-shielded Screen Day worker
             screenday::start_screenday_worker(handle.clone());
 
+            // Start low-CPU cursor gaze emitter (skips work when overlay is hidden)
+            overlay::start_cursor_gaze_emitter(handle.clone());
+
             // Build system tray icon
             if let Err(e) = setup_tray(&handle) {
                 log::warn!("Tray icon setup warning: {}", e);
@@ -275,6 +278,7 @@ pub fn run() {
             next_step,
             clear_overlay,
             toggle_magnify,
+            input::toggle_bar_only,
             get_settings,
             set_settings,
             history_list,

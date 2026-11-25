@@ -819,6 +819,52 @@ export function onBarSummoned(handler: () => void): Promise<UnlistenFn> {
   });
 }
 
+export interface ShortcutActionPayload {
+  action: string;
+  active: boolean;
+  label: string;
+}
+
+export interface CursorGazePayload {
+  x: number;
+  y: number;
+}
+
+export async function toggleBarOnly(): Promise<boolean> {
+  const raw = await invokeWithFallback<unknown>(
+    "toggle_bar_only",
+    undefined,
+    () => false,
+  );
+  return Boolean(raw);
+}
+
+export function onShortcutAction(
+  cb: (payload: ShortcutActionPayload) => void,
+): Promise<UnlistenFn> {
+  return safeListen<unknown>("shortcut-action", (payload) => {
+    const obj = isRecord(payload) ? payload : {};
+    cb({
+      action: typeof obj.action === "string" ? obj.action : "",
+      active: Boolean(obj.active),
+      label: typeof obj.label === "string" ? obj.label : "",
+    });
+  });
+}
+
+export function onOverlayCursor(
+  cb: (payload: CursorGazePayload) => void,
+): Promise<UnlistenFn> {
+  return safeListen<unknown>("overlay-cursor", (payload) => {
+    if (!isRecord(payload)) return;
+    const x = Number(payload.x);
+    const y = Number(payload.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      cb({ x, y });
+    }
+  });
+}
+
 const VALID_SETTINGS_TABS: readonly SettingsTab[] = [
   "overview",
   "brains",

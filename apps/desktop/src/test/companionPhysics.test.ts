@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeCursorGaze,
+  CURSOR_PROXIMITY_PX,
+  stepChoreography,
+} from "../companions/companionChoreography";
+import {
   computeBubblePosition,
   computeLandingSpot,
   computeWanderWaypoint,
@@ -175,5 +180,82 @@ describe("companionPhysics", () => {
     expect(overlapsTarget).toBe(false);
     expect(bubble.x).toBeGreaterThanOrEqual(12);
     expect(bubble.y).toBeGreaterThanOrEqual(12);
+  });
+});
+
+describe("companionChoreography", () => {
+  const viewport = { w: 1920, h: 1080 };
+
+  it("cycles organically through idle, peeking, walking, play, and dance near bottom-right", () => {
+    const activities = new Set<string>();
+    for (let tick = 0; tick < 7; tick++) {
+      const state = stepChoreography({ viewport, tick, companionSize: 64 });
+      activities.add(state.activity);
+      expect(state.cursorNear).toBe(false);
+      expect(state.x).toBeGreaterThanOrEqual(12);
+      expect(state.x + 64).toBeLessThanOrEqual(viewport.w);
+      expect(state.y).toBeGreaterThanOrEqual(12);
+      expect(state.y + 64).toBeLessThanOrEqual(viewport.h);
+    }
+    expect(activities.has("idle")).toBe(true);
+    expect(activities.has("peeking")).toBe(true);
+    expect(activities.has("walking")).toBe(true);
+    expect(activities.has("play")).toBe(true);
+    expect(activities.has("dance")).toBe(true);
+  });
+
+  it("reacts to nearby cursor (<150px) with curious/play and normalized gaze", () => {
+    const base = stepChoreography({ viewport, tick: 0, companionSize: 64 });
+    const center = { x: base.x + 32, y: base.y + 32 };
+
+    // Far cursor -> no proximity reaction
+    const farGaze = computeCursorGaze(center, {
+      x: center.x - 300,
+      y: center.y,
+    });
+    expect(farGaze.distance).toBeGreaterThanOrEqual(CURSOR_PROXIMITY_PX);
+
+    // Medium-near cursor (110px left) -> curious & facing left
+    const nearState = stepChoreography(
+      {
+        viewport,
+        tick: 0,
+        cursor: { x: center.x - 110, y: center.y - 20 },
+        companionSize: 64,
+      },
+      base,
+    );
+    expect(nearState.cursorNear).toBe(true);
+    expect(nearState.emotion).toBe("curious");
+    expect(nearState.facing).toBe("left");
+    expect(nearState.gazeX).toBeLessThan(0);
+    expect(nearState.gazeY).toBeLessThan(0);
+
+    // Very close cursor (<75px right) -> playful paw-bat & facing right
+    const playState = stepChoreography(
+      {
+        viewport,
+        tick: 0,
+        cursor: { x: center.x + 40, y: center.y + 10 },
+        companionSize: 64,
+      },
+      base,
+    );
+    expect(playState.cursorNear).toBe(true);
+    expect(playState.emotion).toBe("play");
+    expect(playState.facing).toBe("right");
+    expect(playState.gazeX).toBeGreaterThan(0);
+    expect(playState.gazeY).toBeGreaterThan(0);
+  });
+
+  it("transitions to sleep after idle threshold when cursor is far", () => {
+    const sleepy = stepChoreography({
+      viewport,
+      tick: 2,
+      idleSeconds: 200,
+      cursor: { x: 100, y: 100 },
+    });
+    expect(sleepy.activity).toBe("sleep");
+    expect(sleepy.emotion).toBe("sleep");
   });
 });

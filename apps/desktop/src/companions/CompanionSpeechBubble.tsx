@@ -59,8 +59,10 @@ export const CompanionSpeechBubble: React.FC<CompanionSpeechBubbleProps> = ({
       style={{
         borderColor: highContrast ? "#FACC15" : "rgba(255, 255, 255, 0.10)",
       }}
-      className={`pointer-events-none select-none max-w-[264px] rounded-2xl border px-3 py-2 shadow-[0_14px_36px_rgba(0,0,0,0.6)] backdrop-blur-2xl ${
-        highContrast ? "bg-[#09090B]/95" : "bg-[#111215]/92"
+      className={`pointer-events-none select-none max-w-[264px] rounded-2xl border backdrop-blur-xl px-3 py-2 shadow-[0_6px_18px_rgba(0,0,0,0.22)] ${
+        highContrast
+          ? "bg-[#09090B]/[0.88]"
+          : "bg-[#0D0E12]/[0.58] border-white/[0.10]"
       } ${className}`}
     >
       <div className="flex items-center justify-between gap-2 mb-1">

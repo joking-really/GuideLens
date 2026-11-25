@@ -410,7 +410,9 @@ describe("FloatingBar", () => {
 
     const bar = screen.getByTestId("floating-bar");
     expect(bar).toHaveAttribute("data-tauri-drag-region");
-    expect(bar.className).toContain("backdrop-blur-2xl");
+    expect(bar.className).toContain("bg-[#0D0E12]/[0.48]");
+    expect(bar.className).toContain("backdrop-blur-xl");
+    expect(bar.className).toContain("border-white/[0.10]");
     expect(bar.className).toContain("rounded-2xl");
     expect(bar.className).toContain("w-[620px]");
     expect(bar.className).toContain("h-[50px]");
@@ -488,6 +490,8 @@ describe("FloatingBar", () => {
 
     const block = await screen.findByTestId("response-block");
     expect(block).toBeInTheDocument();
+    expect(block.className).toContain("bg-[#0D0E12]/[0.58]");
+    expect(block.className).toContain("backdrop-blur-xl");
 
     // AI text must render as plain text only, never executed as HTML
     const instr = screen.getByTestId("instruction-line");
@@ -1054,5 +1058,92 @@ describe("FloatingBar", () => {
       sessionId: "live-sess-1",
       session_id: "live-sess-1",
     });
+  });
+
+  it("renders translucent quick-mode Local/Agent/Auto, Hide bar button, shortcut tooltips, and syncs onShortcutAction", async () => {
+    const user = userEvent.setup();
+    render(<FloatingBar initialSettings={{ onboarding_complete: true, brain_mode: "auto" }} />);
+
+    // Shortcut tooltips
+    expect(screen.getByTestId("mic-shortcut-wrapper")).toHaveAttribute(
+      "title",
+      "Mic (Ctrl+Alt+M)",
+    );
+    expect(screen.getByTestId("live-call-toggle").getAttribute("title")).toContain(
+      "Ctrl+Alt+L",
+    );
+    expect(screen.getByTestId("screenday-toggle").getAttribute("title")).toContain(
+      "Ctrl+Alt+D",
+    );
+    expect(screen.getByTestId("hide-bar-btn").getAttribute("title")).toContain(
+      "Ctrl+Alt+H",
+    );
+
+    const localBtn = screen.getByTestId("quick-mode-local");
+    const agentBtn = screen.getByTestId("quick-mode-agent");
+    const autoBtn = screen.getByTestId("quick-mode-auto");
+    expect(autoBtn).toHaveAttribute("aria-pressed", "true");
+
+    // Clicking Local switches brain_mode to local_vlm
+    await user.click(localBtn);
+    expect(localBtn).toHaveAttribute("aria-pressed", "true");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_settings",
+      expect.objectContaining({
+        s: expect.objectContaining({ brain_mode: "local_vlm" }),
+      }),
+    );
+
+    // Clicking Agent switches brain_mode to agent_cli
+    await user.click(agentBtn);
+    expect(agentBtn).toHaveAttribute("aria-pressed", "true");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_settings",
+      expect.objectContaining({
+        s: expect.objectContaining({ brain_mode: "agent_cli" }),
+      }),
+    );
+
+    // Clicking Hide button calls toggle_bar_only
+    await user.click(screen.getByTestId("hide-bar-btn"));
+    expect(mocks.invoke).toHaveBeenCalledWith("toggle_bar_only", undefined);
+
+    // Global shortcut-action events immediately sync UI state
+    await act(async () => {
+      mocks.emitMockEvent("shortcut-action", {
+        action: "toggle_mic",
+        active: true,
+        label: "Mic On",
+      });
+      mocks.emitMockEvent("shortcut-action", {
+        action: "toggle_day",
+        active: true,
+        label: "Day On",
+      });
+      mocks.emitMockEvent("shortcut-action", {
+        action: "use_local",
+        active: true,
+        label: "Use Local",
+      });
+    });
+
+    expect(screen.getByTestId("voice-mute-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByTestId("screenday-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(localBtn).toHaveAttribute("aria-pressed", "true");
+
+    await act(async () => {
+      mocks.emitMockEvent("shortcut-action", {
+        action: "use_agent",
+        active: true,
+        label: "Use Agent",
+      });
+    });
+    expect(agentBtn).toHaveAttribute("aria-pressed", "true");
   });
 });

@@ -13,13 +13,18 @@ export type CompanionEmotion =
   | "bonk"
   | "curious"
   | "thinking"
-  | "celebrate";
+  | "celebrate"
+  | "dance"
+  | "play"
+  | "sleep";
 
 export interface CompanionSpriteProps {
   companionId: CompanionId;
   emotion?: CompanionEmotion;
   actionKind?: string | null;
   facing?: "left" | "right";
+  gazeX?: number;
+  gazeY?: number;
   size?: number;
   className?: string;
 }
@@ -35,7 +40,17 @@ const VALID_EMOTIONS: ReadonlySet<CompanionEmotion> = new Set([
   "curious",
   "thinking",
   "celebrate",
+  "dance",
+  "play",
+  "sleep",
 ]);
+
+function clampGaze(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(-1, Math.min(1, value));
+}
 
 export function normalizeCompanionEmotion(
   raw: string | null | undefined,
@@ -59,6 +74,12 @@ function resolveMotionClass(emotion: CompanionEmotion): string {
       return "gl-anim-walk";
     case "celebrate":
       return "gl-anim-celebrate";
+    case "dance":
+      return "gl-anim-dance";
+    case "play":
+      return "gl-anim-play";
+    case "sleep":
+      return "gl-anim-sleep";
     case "bonk":
       return "gl-anim-bonk";
     case "jumping":
@@ -66,6 +87,30 @@ function resolveMotionClass(emotion: CompanionEmotion): string {
     default:
       return "gl-anim-float";
   }
+}
+
+function resolveHeadClass(emotion: CompanionEmotion): string {
+  switch (emotion) {
+    case "bonk":
+      return "gl-head-bonk";
+    case "curious":
+    case "peeking":
+      return "gl-head-curious";
+    case "dance":
+    case "celebrate":
+      return "gl-head-dance";
+    case "play":
+      return "gl-head-play";
+    default:
+      return "";
+  }
+}
+
+interface PersonaSvgProps {
+  emotion: CompanionEmotion;
+  facing: "left" | "right";
+  gazeX: number;
+  gazeY: number;
 }
 
 const ReactionOverlay: React.FC<{
@@ -79,37 +124,44 @@ const ReactionOverlay: React.FC<{
 
   return (
     <g pointerEvents="none">
-      {/* Subtle monochrome bonk ripple & alert glyph */}
+      {/* Subtle monochrome bonk impact arc & alert glyph */}
       {emotion === "bonk" && (
         <g data-testid="companion-fx-bonk">
+          <g className="gl-anim-bonk-arc">
+            <path
+              d="M23 11 Q32 5 41 11"
+              fill="none"
+              stroke="#E4E4E7"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeOpacity="0.85"
+            />
+            <path
+              d="M26 8 L24 5 M32 7 L32 3.5 M38 8 L40 5"
+              stroke="#A1A1AA"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+            />
+          </g>
           <circle
-            cx="49"
+            cx="50"
             cy="12"
-            r="6.5"
+            r="6"
             fill="#111215"
-            fillOpacity="0.92"
+            fillOpacity="0.9"
             stroke="#E4E4E7"
-            strokeWidth="1.2"
+            strokeWidth="1.1"
           />
           <text
-            x="49"
+            x="50"
             y="15.5"
             textAnchor="middle"
-            fontSize="10"
+            fontSize="9.5"
             fontWeight="700"
             fill="#F4F4F5"
           >
             !
           </text>
-          <circle
-            cx="32"
-            cy="10"
-            r="3"
-            fill="none"
-            stroke="#A1A1AA"
-            strokeWidth="1.2"
-            strokeOpacity="0.7"
-          />
         </g>
       )}
 
@@ -125,6 +177,56 @@ const ReactionOverlay: React.FC<{
             fill="#D4D4D8"
           />
           <circle cx="32" cy="7.5" r="1.4" fill="#A1A1AA" />
+        </g>
+      )}
+
+      {/* Rhythm / motion arcs for dance */}
+      {emotion === "dance" && (
+        <g data-testid="companion-fx-dance" className="gl-anim-sparkle">
+          <path
+            d="M12 18 Q10 13 14 10"
+            fill="none"
+            stroke="#E4E4E7"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+          />
+          <path
+            d="M52 18 Q54 13 50 10"
+            fill="none"
+            stroke="#E4E4E7"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+          />
+          <circle cx="49" cy="9" r="1.5" fill="#F4F4F5" />
+          <line x1="50.5" y1="9" x2="50.5" y2="4.5" stroke="#F4F4F5" strokeWidth="1.2" strokeLinecap="round" />
+          <line x1="50.5" y1="4.5" x2="53.5" y2="5.5" stroke="#F4F4F5" strokeWidth="1.2" strokeLinecap="round" />
+        </g>
+      )}
+
+      {/* Playful pounce motion lines */}
+      {emotion === "play" && (
+        <g data-testid="companion-fx-play" className="gl-anim-sparkle">
+          <path
+            d="M11 24 Q14 20 17 22"
+            fill="none"
+            stroke="#D4D4D8"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+          />
+          <circle cx="51" cy="21" r="1.4" fill="#F4F4F5" />
+          <circle cx="48" cy="16" r="1" fill="#A1A1AA" />
+        </g>
+      )}
+
+      {/* Quiet floating Zs for sleep */}
+      {emotion === "sleep" && (
+        <g data-testid="companion-fx-sleep" className="gl-anim-sleep-z">
+          <text x="44" y="16" fontSize="8" fontWeight="600" fill="#D4D4D8">
+            z
+          </text>
+          <text x="50" y="10" fontSize="6.5" fontWeight="600" fill="#A1A1AA">
+            z
+          </text>
         </g>
       )}
 
@@ -222,28 +324,40 @@ const ReactionOverlay: React.FC<{
   );
 };
 
-/** Mochi: smooth rounded minimal ivory/graphite cat with calm blinking eyes and subtle ear tilt */
-const MochiCatSvg: React.FC<{
-  emotion: CompanionEmotion;
-  facing: "left" | "right";
-}> = ({ emotion, facing }) => {
-  const eyeOffset = facing === "left" ? -1.4 : 1.4;
-  const peekShiftY = emotion === "peeking" ? 4 : 0;
-  const earTilt = emotion === "curious" ? -4 : 0;
+/** Mochi: articulated minimal ivory/graphite cat with independent ears, tail, head, paws, and cursor-tracking pupils */
+const MochiCatSvg: React.FC<PersonaSvgProps> = ({
+  emotion,
+  facing,
+  gazeX,
+  gazeY,
+}) => {
+  const pupilDx = gazeX * 1.8;
+  const pupilDy = gazeY * 1.3;
+  const peekShiftY = emotion === "peeking" ? 5 : 0;
+  const headClass = resolveHeadClass(emotion);
+  const isFastTail =
+    emotion === "dance" || emotion === "play" || emotion === "celebrate";
+  const isStepping = emotion === "walking" || emotion === "play";
+  const isWaving = emotion === "dance" || emotion === "celebrate";
+  const isBonk = emotion === "bonk";
+  const isPeeking = emotion === "peeking";
 
   return (
     <g transform={`translate(0, ${peekShiftY})`}>
-      {/* Minimal curved tail */}
-      <g className="gl-anim-tail">
+      {/* Articulated curved tail */}
+      <g
+        data-part="tail"
+        className={isFastTail ? "gl-anim-tail-fast" : "gl-anim-tail"}
+      >
         <path
-          d="M44 47 C50 47, 52 41, 49 36"
+          d="M44 47 C51 47, 53 40, 49 35"
           fill="none"
           stroke="#D4D4D8"
           strokeWidth="3.2"
           strokeLinecap="round"
         />
         <path
-          d="M44 47 C50 47, 52 41, 49 36"
+          d="M44 47 C51 47, 53 40, 49 35"
           fill="none"
           stroke="#27272A"
           strokeWidth="1"
@@ -252,38 +366,51 @@ const MochiCatSvg: React.FC<{
         />
       </g>
 
-      {/* Smooth rounded body */}
-      <rect
-        x="20"
-        y="36"
-        width="24"
-        height="19"
-        rx="9.5"
-        fill="#F4F4F5"
-        stroke="#27272A"
-        strokeWidth="1.5"
-      />
-      {/* Subtle graphite chest shadow */}
-      <ellipse cx="32" cy="46" rx="6.5" ry="5.5" fill="#E4E4E7" />
-
-      {/* Head + gently tilted ears */}
-      <g transform={`rotate(${earTilt} 32 26)`}>
-        <path
-          d="M19 23 L20.5 11.5 C21 10.5, 22.2 10.5, 23 11.4 L28 17.5 Z"
+      {/* Rounded torso */}
+      <g data-part="body">
+        <rect
+          x="20"
+          y="36"
+          width="24"
+          height="19"
+          rx="9.5"
           fill="#F4F4F5"
           stroke="#27272A"
           strokeWidth="1.5"
-          strokeLinejoin="round"
         />
-        <path
-          d="M45 23 L43.5 11.5 C43 10.5, 41.8 10.5, 41 11.4 L36 17.5 Z"
-          fill="#E4E4E7"
-          stroke="#27272A"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-        <path d="M21 20 L21.8 14 L25.4 18.2 Z" fill="#3F3F46" />
-        <path d="M43 20 L42.2 14 L38.6 18.2 Z" fill="#3F3F46" />
+        <ellipse cx="32" cy="46" rx="6.5" ry="5.5" fill="#E4E4E7" />
+      </g>
+
+      {/* Articulated Head + Asymmetric Twitching / Flattening Ears */}
+      <g data-part="head" className={headClass}>
+        <g data-part="ears">
+          <g
+            className={isBonk ? "" : "gl-anim-ear-left"}
+            transform={isBonk ? "rotate(-22 21 21)" : undefined}
+          >
+            <path
+              d="M19 23 L20.5 11.5 C21 10.5, 22.2 10.5, 23 11.4 L28 17.5 Z"
+              fill="#F4F4F5"
+              stroke="#27272A"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+            />
+            <path d="M21 20 L21.8 14 L25.4 18.2 Z" fill="#3F3F46" />
+          </g>
+          <g
+            className={isBonk ? "" : "gl-anim-ear-right"}
+            transform={isBonk ? "rotate(22 43 21)" : undefined}
+          >
+            <path
+              d="M45 23 L43.5 11.5 C43 10.5, 41.8 10.5, 41 11.4 L36 17.5 Z"
+              fill="#E4E4E7"
+              stroke="#27272A"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+            />
+            <path d="M43 20 L42.2 14 L38.6 18.2 Z" fill="#3F3F46" />
+          </g>
+        </g>
 
         <rect
           x="16.5"
@@ -295,36 +422,69 @@ const MochiCatSvg: React.FC<{
           stroke="#27272A"
           strokeWidth="1.5"
         />
-        {/* Subtle graphite ear-crown accent */}
         <path
           d="M36 16.5 C42 16.8, 46.5 20, 47 24.5 L41 24.5 C39 21.5, 37 19, 36 16.5 Z"
           fill="#D4D4D8"
         />
 
-        {/* Eyes */}
+        {/* Eyes & Live Cursor-Tracking Pupils */}
         {emotion === "bonk" ? (
-          <g stroke="#18181B" strokeWidth="1.7" strokeLinecap="round">
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            stroke="#18181B"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+          >
             <path d="M23 25.5 L26.5 28 M26.5 25.5 L23 28" />
             <path d="M37.5 25.5 L41 28 M41 25.5 L37.5 28" />
           </g>
-        ) : emotion === "celebrate" ? (
-          <g fill="none" stroke="#18181B" strokeWidth="1.7" strokeLinecap="round">
+        ) : emotion === "celebrate" || emotion === "dance" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            fill="none"
+            stroke="#18181B"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+          >
             <path d="M22.5 27.5 Q25 24 27.5 27.5" />
             <path d="M36.5 27.5 Q39 24 41.5 27.5" />
           </g>
+        ) : emotion === "sleep" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            fill="none"
+            stroke="#18181B"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          >
+            <path d="M22.5 27 Q25 29 27.5 27" />
+            <path d="M36.5 27 Q39 29 41.5 27" />
+          </g>
         ) : (
-          <g className="gl-anim-blink">
-            <circle cx={25 + eyeOffset * 0.6} cy="26.5" r="2.2" fill="#18181B" />
-            <circle cx={39 + eyeOffset * 0.6} cy="26.5" r="2.2" fill="#18181B" />
-            <circle cx={24.4 + eyeOffset * 0.8} cy="25.8" r="0.7" fill="#FFFFFF" />
-            <circle cx={38.4 + eyeOffset * 0.8} cy="25.8" r="0.7" fill="#FFFFFF" />
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            className="gl-anim-blink"
+          >
+            <circle cx="25" cy="26.5" r="2.7" fill="#FFFFFF" stroke="#27272A" strokeWidth="0.9" />
+            <circle cx="39" cy="26.5" r="2.7" fill="#FFFFFF" stroke="#27272A" strokeWidth="0.9" />
+            <circle cx={25 + pupilDx * 0.7} cy={26.5 + pupilDy * 0.7} r="1.65" fill="#18181B" />
+            <circle cx={39 + pupilDx * 0.7} cy={26.5 + pupilDy * 0.7} r="1.65" fill="#18181B" />
+            <circle cx={24.5 + pupilDx * 0.8} cy={25.9 + pupilDy * 0.8} r="0.55" fill="#FFFFFF" />
+            <circle cx={38.5 + pupilDx * 0.8} cy={25.9 + pupilDy * 0.8} r="0.55" fill="#FFFFFF" />
           </g>
         )}
 
-        {/* Minimal nose & mouth */}
-        <circle cx="32" cy="29.5" r="0.9" fill="#52525B" />
+        <circle cx="32" cy="29.8" r="0.9" fill="#52525B" />
         <path
-          d="M30 31.4 Q32 32.8 34 31.4"
+          d="M30 31.6 Q32 33 34 31.6"
           fill="none"
           stroke="#27272A"
           strokeWidth="1.2"
@@ -332,247 +492,588 @@ const MochiCatSvg: React.FC<{
         />
       </g>
 
-      {/* Resting / pointing paws */}
-      {emotion === "pointing" ? (
-        <ellipse
-          cx={facing === "right" ? 48 : 16}
-          cy="41"
-          rx="4"
-          ry="2.8"
+      {/* Articulated Paws & Legs */}
+      {isPeeking ? (
+        <g data-testid="companion-peeking-paws" className="gl-anim-paw-peek">
+          <line x1="12" y1="53" x2="52" y2="53" stroke="#A1A1AA" strokeOpacity="0.45" strokeWidth="1.2" strokeLinecap="round" />
+          <ellipse data-part="paws-left" cx="23.5" cy="52" rx="3.8" ry="2.4" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.3" />
+          <ellipse data-part="paws-right" cx="40.5" cy="52" rx="3.8" ry="2.4" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.3" />
+        </g>
+      ) : isBonk ? (
+        <g>
+          {/* Paws clutch temples while head bangs */}
+          <ellipse data-part="paws-left" cx="17" cy="27" rx="3.1" ry="2.4" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.3" />
+          <ellipse data-part="paws-right" cx="47" cy="27" rx="3.1" ry="2.4" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.3" />
+          <ellipse cx="25" cy="54.5" rx="3.3" ry="2" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+          <ellipse cx="39" cy="54.5" rx="3.3" ry="2" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+        </g>
+      ) : emotion === "pointing" ? (
+        <g>
+          <ellipse
+            data-part="paws-right"
+            cx={facing === "right" ? 49 : 15}
+            cy="40"
+            rx="4.1"
+            ry="2.6"
+            fill="#F4F4F5"
+            stroke="#27272A"
+            strokeWidth="1.4"
+          />
+          <ellipse data-part="paws-left" cx="25" cy="54.5" rx="3.4" ry="2" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+          <ellipse cx="39" cy="54.5" rx="3.4" ry="2" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+        </g>
+      ) : (
+        <g>
+          <ellipse
+            data-part="paws-left"
+            cx="24.5"
+            cy={isWaving ? "48" : "54.5"}
+            rx="3.4"
+            ry="2.1"
+            fill="#F4F4F5"
+            stroke="#27272A"
+            strokeWidth="1.2"
+            className={
+              isWaving
+                ? "gl-anim-paw-wave-left"
+                : isStepping
+                  ? "gl-anim-paw-step-left"
+                  : undefined
+            }
+          />
+          <ellipse
+            data-part="paws-right"
+            cx="39.5"
+            cy={isWaving ? "48" : "54.5"}
+            rx="3.4"
+            ry="2.1"
+            fill="#F4F4F5"
+            stroke="#27272A"
+            strokeWidth="1.2"
+            className={
+              isWaving
+                ? "gl-anim-paw-wave-right"
+                : isStepping
+                  ? "gl-anim-paw-step-right"
+                  : undefined
+            }
+          />
+        </g>
+      )}
+    </g>
+  );
+};
+
+/** Byte: articulated matte-obsidian bot with swaying antenna, dark glass visor, tracking eye dots, and articulated arms/feet */
+const ByteHackerSvg: React.FC<PersonaSvgProps> = ({
+  emotion,
+  facing,
+  gazeX,
+  gazeY,
+}) => {
+  const pupilDx = gazeX * 2.2;
+  const pupilDy = gazeY * 1.3;
+  const peekShiftY = emotion === "peeking" ? 5 : 0;
+  const headClass = resolveHeadClass(emotion);
+  const isStepping = emotion === "walking" || emotion === "play";
+  const isWaving = emotion === "dance" || emotion === "celebrate";
+  const isBonk = emotion === "bonk";
+  const isPeeking = emotion === "peeking";
+
+  return (
+    <g transform={`translate(0, ${peekShiftY})`}>
+      {/* Chassis body */}
+      <g data-part="body">
+        <rect
+          x="19"
+          y="37"
+          width="26"
+          height="17"
+          rx="8"
+          fill="#18181B"
+          stroke="#52525B"
+          strokeWidth="1.3"
+        />
+        <line x1="27" y1="45" x2="37" y2="45" stroke="#52525B" strokeWidth="1.4" strokeLinecap="round" />
+      </g>
+
+      {/* Articulated Head + Antenna + Visor */}
+      <g data-part="head" className={headClass}>
+        <g data-part="antenna" className="gl-anim-antenna">
+          <line x1="32" y1="9" x2="32" y2="15" stroke="#71717A" strokeWidth="1.5" />
+          <circle cx="32" cy="8" r="2.1" fill="#F4F4F5" stroke="#18181B" strokeWidth="1" />
+        </g>
+
+        <rect
+          x="16.5"
+          y="15"
+          width="31"
+          height="22"
+          rx="9.5"
+          fill="#18181B"
+          stroke="#52525B"
+          strokeWidth="1.4"
+        />
+
+        <rect
+          x={20 + gazeX * 0.5}
+          y={20.5 + gazeY * 0.3}
+          width="24"
+          height="10.5"
+          rx="5.2"
+          fill="#09090B"
+          stroke="#71717A"
+          strokeOpacity="0.7"
+          strokeWidth="1.1"
+        />
+
+        {emotion === "bonk" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            stroke="#E4E4E7"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          >
+            <path d="M24.5 24.5 L27.5 27.5 M27.5 24.5 L24.5 27.5" />
+            <path d="M36.5 24.5 L39.5 27.5 M39.5 24.5 L36.5 27.5" />
+          </g>
+        ) : emotion === "celebrate" || emotion === "dance" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            fill="none"
+            stroke="#F4F4F5"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+          >
+            <path d="M23.5 26.5 Q26 23.5 28.5 26.5" />
+            <path d="M35.5 26.5 Q38 23.5 40.5 26.5" />
+          </g>
+        ) : emotion === "sleep" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            stroke="#A1A1AA"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          >
+            <line x1="23.5" y1="26" x2="28" y2="26" />
+            <line x1="36" y1="26" x2="40.5" y2="26" />
+          </g>
+        ) : (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            className="gl-anim-blink"
+          >
+            <circle cx={26 + pupilDx} cy={25.8 + pupilDy} r="2" fill="#F4F4F5" />
+            <circle cx={38 + pupilDx} cy={25.8 + pupilDy} r="2" fill="#F4F4F5" />
+          </g>
+        )}
+      </g>
+
+      {/* Articulated Arms / Feet */}
+      {isPeeking ? (
+        <g data-testid="companion-peeking-paws" className="gl-anim-paw-peek">
+          <line x1="12" y1="53" x2="52" y2="53" stroke="#A1A1AA" strokeOpacity="0.45" strokeWidth="1.2" strokeLinecap="round" />
+          <rect data-part="paws-left" x="20" y="50" width="7" height="4" rx="2" fill="#27272A" stroke="#71717A" strokeWidth="1.1" />
+          <rect data-part="paws-right" x="37" y="50" width="7" height="4" rx="2" fill="#27272A" stroke="#71717A" strokeWidth="1.1" />
+        </g>
+      ) : isBonk ? (
+        <g>
+          <rect data-part="paws-left" x="13" y="24" width="5" height="5" rx="2" fill="#27272A" stroke="#71717A" strokeWidth="1.1" />
+          <rect data-part="paws-right" x="46" y="24" width="5" height="5" rx="2" fill="#27272A" stroke="#71717A" strokeWidth="1.1" />
+          <rect x="22" y="53" width="6" height="3.2" rx="1.6" fill="#27272A" stroke="#52525B" strokeWidth="1.1" />
+          <rect x="36" y="53" width="6" height="3.2" rx="1.6" fill="#27272A" stroke="#52525B" strokeWidth="1.1" />
+        </g>
+      ) : (
+        <g>
+          {emotion === "pointing" && (
+            <line
+              x1={facing === "right" ? 45 : 19}
+              y1="44"
+              x2={facing === "right" ? 52 : 12}
+              y2="38"
+              stroke="#E4E4E7"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+          )}
+          <rect
+            data-part="paws-left"
+            x="21.5"
+            y={isWaving ? "45" : "53"}
+            width="6.5"
+            height="3.4"
+            rx="1.7"
+            fill="#27272A"
+            stroke="#71717A"
+            strokeWidth="1.1"
+            className={
+              isWaving
+                ? "gl-anim-paw-wave-left"
+                : isStepping
+                  ? "gl-anim-paw-step-left"
+                  : undefined
+            }
+          />
+          <rect
+            data-part="paws-right"
+            x="36"
+            y={isWaving ? "45" : "53"}
+            width="6.5"
+            height="3.4"
+            rx="1.7"
+            fill="#27272A"
+            stroke="#71717A"
+            strokeWidth="1.1"
+            className={
+              isWaving
+                ? "gl-anim-paw-wave-right"
+                : isStepping
+                  ? "gl-anim-paw-step-right"
+                  : undefined
+            }
+          />
+        </g>
+      )}
+    </g>
+  );
+};
+
+/** Sora: articulated floating sprite with independent halo, cloak, head, hands, and tracking eyes */
+const SoraAnimeSvg: React.FC<PersonaSvgProps> = ({
+  emotion,
+  facing,
+  gazeX,
+  gazeY,
+}) => {
+  const pupilDx = gazeX * 1.5;
+  const pupilDy = gazeY * 1.1;
+  const peekShiftY = emotion === "peeking" ? 5 : 0;
+  const headClass = resolveHeadClass(emotion);
+  const isStepping = emotion === "walking" || emotion === "play";
+  const isWaving = emotion === "dance" || emotion === "celebrate";
+  const isBonk = emotion === "bonk";
+  const isPeeking = emotion === "peeking";
+
+  return (
+    <g transform={`translate(0, ${peekShiftY})`}>
+      {/* Floating cloak silhouette */}
+      <g data-part="body">
+        <path
+          d="M22 36 C19 43, 18 51, 21.5 54.5 L42.5 54.5 C46 51, 45 43, 42 36 Z"
+          fill="url(#gl-sora-grad)"
+          stroke="#3F3F46"
+          strokeWidth="1.4"
+        />
+      </g>
+
+      {/* Articulated Head + Independent Halo */}
+      <g data-part="head" className={headClass}>
+        <g data-part="halo" className="gl-anim-halo">
+          <ellipse
+            cx="32"
+            cy="11.5"
+            rx="10.5"
+            ry="2.6"
+            fill="none"
+            stroke="#F4F4F5"
+            strokeWidth="1.35"
+            strokeOpacity="0.85"
+          />
+        </g>
+
+        <circle
+          cx="32"
+          cy="26"
+          r="11.5"
           fill="#F4F4F5"
           stroke="#27272A"
           strokeWidth="1.4"
         />
+        <path
+          d="M20.8 24.5 C22 16, 42 16, 43.2 24.5 C39.5 20.5, 35.5 22, 32 19.5 C28.5 22, 24.5 20.5, 20.8 24.5 Z"
+          fill="#27272A"
+        />
+
+        {emotion === "bonk" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            stroke="#18181B"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            fill="none"
+          >
+            <path d="M24 25.5 L27 27.5 L24 29.5" />
+            <path d="M40 25.5 L37 27.5 L40 29.5" />
+          </g>
+        ) : emotion === "celebrate" || emotion === "dance" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            fill="none"
+            stroke="#18181B"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+          >
+            <path d="M23.5 27.8 Q26 24.2 28.5 27.8" />
+            <path d="M35.5 27.8 Q38 24.2 40.5 27.8" />
+          </g>
+        ) : emotion === "sleep" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            fill="none"
+            stroke="#18181B"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          >
+            <path d="M24 27.8 Q26.5 29.5 29 27.8" />
+            <path d="M35 27.8 Q37.5 29.5 40 27.8" />
+          </g>
+        ) : (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            className="gl-anim-blink"
+          >
+            <ellipse cx="26.5" cy="27.2" rx="2.1" ry="2.6" fill="#FFFFFF" stroke="#27272A" strokeWidth="0.8" />
+            <ellipse cx="37.5" cy="27.2" rx="2.1" ry="2.6" fill="#FFFFFF" stroke="#27272A" strokeWidth="0.8" />
+            <circle cx={26.5 + pupilDx * 0.7} cy={27.2 + pupilDy * 0.7} r="1.4" fill="#18181B" />
+            <circle cx={37.5 + pupilDx * 0.7} cy={27.2 + pupilDy * 0.7} r="1.4" fill="#18181B" />
+          </g>
+        )}
+      </g>
+
+      {/* Articulated Sprite Sleeves / Hands */}
+      {isPeeking ? (
+        <g data-testid="companion-peeking-paws" className="gl-anim-paw-peek">
+          <line x1="12" y1="53" x2="52" y2="53" stroke="#A1A1AA" strokeOpacity="0.45" strokeWidth="1.2" strokeLinecap="round" />
+          <circle data-part="paws-left" cx="23.5" cy="52" r="2.6" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+          <circle data-part="paws-right" cx="40.5" cy="52" r="2.6" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+        </g>
+      ) : isBonk ? (
+        <g>
+          <circle data-part="paws-left" cx="19" cy="26" r="2.6" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+          <circle data-part="paws-right" cx="45" cy="26" r="2.6" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+        </g>
       ) : (
         <g>
-          <ellipse cx="25" cy="54.5" rx="3.4" ry="2" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
-          <ellipse cx="39" cy="54.5" rx="3.4" ry="2" fill="#F4F4F5" stroke="#27272A" strokeWidth="1.2" />
+          {emotion === "pointing" && (
+            <line
+              x1={facing === "right" ? 44 : 20}
+              y1="43"
+              x2={facing === "right" ? 52 : 12}
+              y2="37"
+              stroke="#E4E4E7"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+          )}
+          <circle
+            data-part="paws-left"
+            cx="19"
+            cy={isWaving ? "43" : "46"}
+            r="2.4"
+            fill="#F4F4F5"
+            stroke="#27272A"
+            strokeWidth="1.2"
+            className={
+              isWaving
+                ? "gl-anim-paw-wave-left"
+                : isStepping
+                  ? "gl-anim-paw-step-left"
+                  : undefined
+            }
+          />
+          <circle
+            data-part="paws-right"
+            cx="45"
+            cy={isWaving ? "43" : "46"}
+            r="2.4"
+            fill="#F4F4F5"
+            stroke="#27272A"
+            strokeWidth="1.2"
+            className={
+              isWaving
+                ? "gl-anim-paw-wave-right"
+                : isStepping
+                  ? "gl-anim-paw-step-right"
+                  : undefined
+            }
+          />
         </g>
       )}
     </g>
   );
 };
 
-/** Byte: sleek matte-obsidian rounded bot with dark glass visor and minimal alabaster dot eyes */
-const ByteHackerSvg: React.FC<{
-  emotion: CompanionEmotion;
-  facing: "left" | "right";
-}> = ({ emotion, facing }) => {
-  const visorOffset = facing === "left" ? -1.4 : 1.4;
-  const peekShiftY = emotion === "peeking" ? 4 : 0;
+/** Flow: articulated concentric orb with rotating orbital ring, stabilizer nodes, and live tracking iris */
+const FlowOrbSvg: React.FC<PersonaSvgProps> = ({
+  emotion,
+  gazeX,
+  gazeY,
+}) => {
+  const pupilDx = gazeX * 3.2;
+  const pupilDy = gazeY * 2.4;
+  const headClass = resolveHeadClass(emotion);
+  const isFastOrbit =
+    emotion === "dance" || emotion === "play" || emotion === "celebrate";
+  const isStepping = emotion === "walking" || emotion === "play";
+  const isWaving = emotion === "dance" || emotion === "celebrate";
+  const isPeeking = emotion === "peeking";
 
   return (
-    <g transform={`translate(0, ${peekShiftY})`}>
-      {/* Minimal antenna */}
-      <line x1="32" y1="9" x2="32" y2="15" stroke="#71717A" strokeWidth="1.5" />
-      <circle cx="32" cy="8.5" r="2" fill="#F4F4F5" stroke="#18181B" strokeWidth="1" />
+    <g transform={isPeeking ? "translate(0, 5)" : undefined}>
+      {/* Rotating outer orbital ring & satellite */}
+      <g
+        data-part="orbit"
+        className={isFastOrbit ? "gl-anim-orbit-fast" : "gl-anim-orbit"}
+      >
+        <circle
+          cx="32"
+          cy="32"
+          r="20.5"
+          fill="none"
+          stroke="#A1A1AA"
+          strokeWidth="1.2"
+          strokeOpacity="0.45"
+          strokeDasharray="18 6"
+        />
+        <circle
+          cx="50.5"
+          cy="24"
+          r="2.2"
+          fill="#E4E4E7"
+          stroke="#18181B"
+          strokeWidth="1"
+        />
+      </g>
 
-      {/* Matte-obsidian rounded chassis */}
-      <rect
-        x="19"
-        y="37"
-        width="26"
-        height="18"
-        rx="8.5"
-        fill="#18181B"
-        stroke="#52525B"
-        strokeWidth="1.3"
-      />
-      <line x1="27" y1="45" x2="37" y2="45" stroke="#3F3F46" strokeWidth="1.4" strokeLinecap="round" />
+      {/* Core shell */}
+      <g data-part="body">
+        <circle
+          cx="32"
+          cy="32"
+          r="15"
+          fill="url(#gl-flow-grad)"
+          stroke="#F4F4F5"
+          strokeOpacity="0.7"
+          strokeWidth="1.4"
+        />
+        <circle
+          cx="32"
+          cy="32"
+          r="9.5"
+          fill="none"
+          stroke="#E4E4E7"
+          strokeOpacity="0.25"
+          strokeWidth="1"
+        />
+      </g>
 
-      {/* Head */}
-      <rect
-        x="16.5"
-        y="15"
-        width="31"
-        height="22"
-        rx="9.5"
-        fill="#18181B"
-        stroke="#52525B"
-        strokeWidth="1.4"
-      />
+      {/* Articulated Tracking Iris */}
+      <g data-part="head" className={headClass}>
+        {emotion === "bonk" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            stroke="#F4F4F5"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+          >
+            <path d="M27.5 28.5 L36.5 35.5 M36.5 28.5 L27.5 35.5" />
+          </g>
+        ) : emotion === "sleep" ? (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            stroke="#A1A1AA"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            fill="none"
+          >
+            <path d="M27 32.5 Q32 35.5 37 32.5" />
+          </g>
+        ) : (
+          <g
+            data-part="pupils"
+            data-gaze-x={gazeX.toFixed(2)}
+            data-gaze-y={gazeY.toFixed(2)}
+            className="gl-anim-blink"
+          >
+            <circle
+              cx={32 + pupilDx}
+              cy={32 + pupilDy}
+              r={emotion === "celebrate" || emotion === "dance" ? 4.4 : 3.6}
+              fill="#F4F4F5"
+            />
+            <circle
+              cx={32 + pupilDx * 1.1}
+              cy={32 + pupilDy * 1.1}
+              r="1.1"
+              fill="#18181B"
+            />
+          </g>
+        )}
+      </g>
 
-      {/* Dark glass visor */}
-      <rect
-        x={20 + visorOffset * 0.3}
-        y="20.5"
-        width="24"
-        height="10.5"
-        rx="5.2"
-        fill="#09090B"
-        stroke="#71717A"
-        strokeOpacity="0.65"
-        strokeWidth="1.1"
-      />
-
-      {/* Alabaster dot eyes */}
-      {emotion === "bonk" ? (
-        <g stroke="#E4E4E7" strokeWidth="1.6" strokeLinecap="round">
-          <path d="M24.5 24.5 L27.5 27.5 M27.5 24.5 L24.5 27.5" />
-          <path d="M36.5 24.5 L39.5 27.5 M39.5 24.5 L36.5 27.5" />
-        </g>
-      ) : emotion === "celebrate" ? (
-        <g fill="none" stroke="#F4F4F5" strokeWidth="1.7" strokeLinecap="round">
-          <path d="M23.5 26.5 Q26 23.5 28.5 26.5" />
-          <path d="M35.5 26.5 Q38 23.5 40.5 26.5" />
+      {/* Stabilizer nodes (act as peeking/waving/stepping paws) */}
+      {isPeeking ? (
+        <g data-testid="companion-peeking-paws" className="gl-anim-paw-peek">
+          <line x1="12" y1="53" x2="52" y2="53" stroke="#A1A1AA" strokeOpacity="0.45" strokeWidth="1.2" strokeLinecap="round" />
+          <circle data-part="paws-left" cx="23" cy="52" r="2.5" fill="#E4E4E7" stroke="#18181B" strokeWidth="1.1" />
+          <circle data-part="paws-right" cx="41" cy="52" r="2.5" fill="#E4E4E7" stroke="#18181B" strokeWidth="1.1" />
         </g>
       ) : (
-        <g className="gl-anim-blink">
-          <circle cx={26 + visorOffset} cy="25.8" r="2" fill="#F4F4F5" />
-          <circle cx={38 + visorOffset} cy="25.8" r="2" fill="#F4F4F5" />
+        <g>
+          <circle
+            data-part="paws-left"
+            cx="15"
+            cy={isWaving ? "36" : "45"}
+            r="2.2"
+            fill="#E4E4E7"
+            stroke="#18181B"
+            strokeWidth="1"
+            className={
+              isWaving
+                ? "gl-anim-paw-wave-left"
+                : isStepping
+                  ? "gl-anim-paw-step-left"
+                  : undefined
+            }
+          />
+          <circle
+            data-part="paws-right"
+            cx="49"
+            cy={isWaving ? "36" : "45"}
+            r="2.2"
+            fill="#E4E4E7"
+            stroke="#18181B"
+            strokeWidth="1"
+            className={
+              isWaving
+                ? "gl-anim-paw-wave-right"
+                : isStepping
+                  ? "gl-anim-paw-step-right"
+                  : undefined
+            }
+          />
         </g>
       )}
-
-      {/* Subtle pointer indicator */}
-      {emotion === "pointing" && (
-        <line
-          x1={facing === "right" ? 45 : 19}
-          y1="44"
-          x2={facing === "right" ? 52 : 12}
-          y2="38"
-          stroke="#E4E4E7"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      )}
-    </g>
-  );
-};
-
-/** Sora: minimal serene floating sprite silhouette with delicate ring halo */
-const SoraAnimeSvg: React.FC<{
-  emotion: CompanionEmotion;
-  facing: "left" | "right";
-}> = ({ emotion, facing }) => {
-  const eyeShift = facing === "left" ? -1.3 : 1.3;
-  const peekShiftY = emotion === "peeking" ? 4 : 0;
-
-  return (
-    <g transform={`translate(0, ${peekShiftY})`}>
-      {/* Delicate ring halo */}
-      <ellipse
-        cx="32"
-        cy="11.5"
-        rx="10.5"
-        ry="2.6"
-        fill="none"
-        stroke="#F4F4F5"
-        strokeWidth="1.3"
-        strokeOpacity="0.8"
-      />
-
-      {/* Serene floating cloak silhouette */}
-      <path
-        d="M22 36 C19 43, 18 51, 21.5 54.5 L42.5 54.5 C46 51, 45 43, 42 36 Z"
-        fill="url(#gl-sora-grad)"
-        stroke="#3F3F46"
-        strokeWidth="1.4"
-      />
-
-      {/* Soft alabaster head */}
-      <circle
-        cx="32"
-        cy="26"
-        r="11.5"
-        fill="#F4F4F5"
-        stroke="#27272A"
-        strokeWidth="1.4"
-      />
-      {/* Minimal curved crown frame */}
-      <path
-        d="M20.8 24.5 C22 16, 42 16, 43.2 24.5 C39.5 20.5, 35.5 22, 32 19.5 C28.5 22, 24.5 20.5, 20.8 24.5 Z"
-        fill="#27272A"
-      />
-
-      {/* Calm eyes */}
-      {emotion === "bonk" ? (
-        <g stroke="#18181B" strokeWidth="1.6" strokeLinecap="round" fill="none">
-          <path d="M24 25.5 L27 27.5 L24 29.5" />
-          <path d="M40 25.5 L37 27.5 L40 29.5" />
-        </g>
-      ) : emotion === "celebrate" ? (
-        <g fill="none" stroke="#18181B" strokeWidth="1.7" strokeLinecap="round">
-          <path d="M23.5 27.8 Q26 24.2 28.5 27.8" />
-          <path d="M35.5 27.8 Q38 24.2 40.5 27.8" />
-        </g>
-      ) : (
-        <g className="gl-anim-blink">
-          <ellipse cx={26.5 + eyeShift * 0.5} cy="27.2" rx="1.7" ry="2.2" fill="#18181B" />
-          <ellipse cx={37.5 + eyeShift * 0.5} cy="27.2" rx="1.7" ry="2.2" fill="#18181B" />
-        </g>
-      )}
-
-      {/* Subtle pointer */}
-      {emotion === "pointing" && (
-        <line
-          x1={facing === "right" ? 44 : 20}
-          y1="43"
-          x2={facing === "right" ? 52 : 12}
-          y2="37"
-          stroke="#E4E4E7"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      )}
-    </g>
-  );
-};
-
-/** Flow: minimal frosted concentric ring & tracking dot */
-const FlowOrbSvg: React.FC<{
-  emotion: CompanionEmotion;
-  facing: "left" | "right";
-}> = ({ emotion, facing }) => {
-  const shift = facing === "left" ? -2.2 : 2.2;
-
-  return (
-    <g>
-      {/* Outer delicate ring */}
-      <circle
-        cx="32"
-        cy="32"
-        r="20.5"
-        fill="none"
-        stroke="#A1A1AA"
-        strokeWidth="1.2"
-        strokeOpacity="0.45"
-      />
-      {/* Frosted obsidian core */}
-      <circle
-        cx="32"
-        cy="32"
-        r="15"
-        fill="url(#gl-flow-grad)"
-        stroke="#F4F4F5"
-        strokeOpacity="0.65"
-        strokeWidth="1.4"
-      />
-      {/* Inner concentric ring */}
-      <circle
-        cx="32"
-        cy="32"
-        r="9.5"
-        fill="none"
-        stroke="#E4E4E7"
-        strokeOpacity="0.25"
-        strokeWidth="1"
-      />
-      {/* Tracking alabaster dot */}
-      <circle
-        cx={32 + shift}
-        cy={emotion === "peeking" ? 30.5 : 32}
-        r={emotion === "celebrate" ? 4.4 : 3.5}
-        fill="#F4F4F5"
-      />
-      {/* Quiet orbital index dot */}
-      <circle
-        cx={facing === "right" ? 50.5 : 13.5}
-        cy="24"
-        r="2"
-        fill="#E4E4E7"
-        stroke="#18181B"
-        strokeWidth="1"
-      />
     </g>
   );
 };
@@ -582,6 +1083,8 @@ export const CompanionSprite: React.FC<CompanionSpriteProps> = ({
   emotion = "idle",
   actionKind = null,
   facing = "right",
+  gazeX,
+  gazeY,
   size = 64,
   className = "",
 }) => {
@@ -596,6 +1099,8 @@ export const CompanionSprite: React.FC<CompanionSpriteProps> = ({
       ? normalizeCompanionEmotion(undefined, actionKind)
       : emotion;
   const motionClass = resolveMotionClass(effectiveEmotion);
+  const resolvedGazeX = clampGaze(gazeX, facing === "left" ? -0.55 : 0.55);
+  const resolvedGazeY = clampGaze(gazeY, 0);
 
   return (
     <div
@@ -603,6 +1108,8 @@ export const CompanionSprite: React.FC<CompanionSpriteProps> = ({
       data-companion={resolvedId}
       data-emotion={effectiveEmotion}
       data-facing={facing}
+      data-gaze-x={resolvedGazeX.toFixed(2)}
+      data-gaze-y={resolvedGazeY.toFixed(2)}
       style={{ width: size, height: size }}
       className={`relative inline-flex items-center justify-center select-none pointer-events-none ${motionClass} ${className}`}
     >
@@ -629,23 +1136,47 @@ export const CompanionSprite: React.FC<CompanionSpriteProps> = ({
         <ellipse
           cx="32"
           cy="58"
-          rx={effectiveEmotion === "jumping" ? 10 : 13}
+          rx={
+            effectiveEmotion === "jumping" || effectiveEmotion === "play"
+              ? 10
+              : 13
+          }
           ry="2.4"
           fill="#000000"
           fillOpacity="0.28"
         />
 
         {resolvedId === "pixel_cat" && (
-          <MochiCatSvg emotion={effectiveEmotion} facing={facing} />
+          <MochiCatSvg
+            emotion={effectiveEmotion}
+            facing={facing}
+            gazeX={resolvedGazeX}
+            gazeY={resolvedGazeY}
+          />
         )}
         {resolvedId === "tech_nerd" && (
-          <ByteHackerSvg emotion={effectiveEmotion} facing={facing} />
+          <ByteHackerSvg
+            emotion={effectiveEmotion}
+            facing={facing}
+            gazeX={resolvedGazeX}
+            gazeY={resolvedGazeY}
+          />
         )}
         {resolvedId === "anime_guide" && (
-          <SoraAnimeSvg emotion={effectiveEmotion} facing={facing} />
+          <SoraAnimeSvg
+            emotion={effectiveEmotion}
+            facing={facing}
+            gazeX={resolvedGazeX}
+            gazeY={resolvedGazeY}
+          />
         )}
         {resolvedId === "minimal_orb" && (
-          <FlowOrbSvg emotion={effectiveEmotion} facing={facing} />
+          <FlowOrbSvg
+            emotion={effectiveEmotion}
+            facing={facing}
+            gazeX={resolvedGazeX}
+            gazeY={resolvedGazeY}
+          />
         )}
 
         <ReactionOverlay

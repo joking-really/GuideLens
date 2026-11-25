@@ -4,10 +4,10 @@
 
 :root {
   --gl-canvas: #0A0B0D;
-  --gl-surface: rgba(17, 19, 23, 0.92);
+  --gl-surface: rgba(13, 14, 18, 0.48);
   --gl-surface-elevated: #111317;
   --gl-surface-hover: #17191E;
-  --gl-border: rgba(255, 255, 255, 0.07);
+  --gl-border: rgba(255, 255, 255, 0.10);
   --gl-text-primary: #F4F4F5;
   --gl-text-secondary: #8E929B;
   --gl-text-muted: #5C606A;
@@ -53,22 +53,11 @@ body,
   font-size: 12.5px;
 }
 
-@keyframes gl-pulse-glow {
-  0%,
-  100% {
-    opacity: 1;
-    filter: drop-shadow(0 0 6px rgba(244, 244, 245, 0.45))
-      drop-shadow(0 0 12px rgba(0, 0, 0, 0.6));
-  }
-  50% {
-    opacity: 0.85;
-    filter: drop-shadow(0 0 10px rgba(244, 244, 245, 0.65))
-      drop-shadow(0 0 16px rgba(0, 0, 0, 0.7));
-  }
-}
-
 .gl-pulse-box {
-  animation: gl-pulse-glow 1.8s ease-in-out infinite;
+  border: 1.5px solid rgba(255, 255, 255, 0.58);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28);
+  background: rgba(255, 255, 255, 0.03);
+  animation: none;
 }
 
 * {

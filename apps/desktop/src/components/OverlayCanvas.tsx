@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  computeCursorGaze,
+  stepChoreography,
+} from "../companions/companionChoreography";
+import {
   computeBubblePosition,
   computeLandingSpot,
-  computeWanderWaypoint,
   type Point2D,
   stepParabolicArc,
 } from "../companions/companionPhysics";
@@ -20,6 +23,7 @@ import {
   onLiveSessionEvent,
   onOverlayCleared,
   onOverlayCompanion,
+  onOverlayCursor,
   onSettingsChanged,
   onStepChanged,
   toAssetUrl,
@@ -46,7 +50,7 @@ export interface OverlayCanvasProps {
 }
 
 const JUMP_DURATION_MS = 340;
-const WANDER_TICK_MS = 9000;
+const WANDER_TICK_MS = 5500;
 const PREVIEW_TTL_MS = 5500;
 
 export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
@@ -70,11 +74,14 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     useState<OverlayCompanionPayload | null>(null);
   const [liveSession, setLiveSession] = useState<LiveSessionState | null>(null);
   const [wanderTick, setWanderTick] = useState(0);
+  const [cursorPos, setCursorPos] = useState<Point2D | null>(null);
 
   const [overlayOrigin, setOverlayOrigin] = useState<{ x: number; y: number }>({
     x: 0,
     y: 0,
   });
+  const overlayOriginRef = useRef<{ x: number; y: number }>(overlayOrigin);
+  overlayOriginRef.current = overlayOrigin;
   const [viewport, setViewport] = useState<{ w: number; h: number }>({
     w: typeof window !== "undefined" ? window.innerWidth || 1920 : 1920,
     h: typeof window !== "undefined" ? window.innerHeight || 1080 : 1080,
@@ -176,6 +183,19 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
       }
     });
 
+    const unlistenCursorPromise = onOverlayCursor((pt) => {
+      if (!mounted) return;
+      const scale =
+        typeof window !== "undefined" && window.devicePixelRatio > 0
+          ? window.devicePixelRatio
+          : 1;
+      const origin = overlayOriginRef.current;
+      setCursorPos({
+        x: (pt.x - origin.x) / scale,
+        y: (pt.y - origin.y) / scale,
+      });
+    });
+
     const handleResize = () => {
       setViewport({
         w: window.innerWidth || 1920,
@@ -207,6 +227,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
       unlistenSettingsPromise.then((fn) => fn()).catch(() => {});
       unlistenCompanionPromise.then((fn) => fn()).catch(() => {});
       unlistenLivePromise.then((fn) => fn()).catch(() => {});
+      unlistenCursorPromise.then((fn) => fn()).catch(() => {});
     };
   }, []);
 
@@ -253,10 +274,13 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   );
 
   const highContrast = payload?.high_contrast ?? highContrastSetting;
-  const borderColor = highContrast ? "#FACC15" : "rgba(255, 255, 255, 0.92)";
+  const borderColor = highContrast ? "#FACC15" : "rgba(255, 255, 255, 0.58)";
   const boxHalo = highContrast
-    ? "0 0 0 1px rgba(0, 0, 0, 0.75), 0 8px 24px rgba(0, 0, 0, 0.45)"
-    : "0 0 0 1px rgba(0, 0, 0, 0.65), 0 8px 24px rgba(0, 0, 0, 0.45)";
+    ? "0 0 0 1px rgba(0, 0, 0, 0.45)"
+    : "0 0 0 1px rgba(0, 0, 0, 0.28)";
+  const boxFillTint = highContrast
+    ? "rgba(250, 204, 21, 0.04)"
+    : "rgba(255, 255, 255, 0.03)";
 
   const showMagnifier = shouldAutoMagnify(
     physicalRect,
@@ -290,9 +314,9 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
 
     ctx.save();
     ctx.strokeStyle = borderColor;
-    ctx.lineWidth = highContrast ? 2.5 : 1.5;
-    ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
-    ctx.shadowBlur = 8;
+    ctx.lineWidth = highContrast ? 2 : 1.5;
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.restore();
 
@@ -349,8 +373,8 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         ctx.arc(mag.lensCx, mag.lensCy, mag.radius, 0, Math.PI * 2);
         ctx.strokeStyle = borderColor;
         ctx.lineWidth = 1.5;
-        ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
-        ctx.shadowBlur = 10;
+        ctx.shadowColor = "rgba(0, 0, 0, 0.28)";
+        ctx.shadowBlur = 2;
         ctx.stroke();
         ctx.restore();
       };
@@ -410,10 +434,23 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   const targetCompanionAnchor = useMemo(() => {
     if (rect && physicalRect) {
       const spot = computeLandingSpot(rect, viewport, companionSize);
+      const center = {
+        x: spot.x + companionSize / 2,
+        y: spot.y + companionSize / 2,
+      };
+      const lookTarget = cursorPos ?? {
+        x: rect.x + rect.w / 2,
+        y: rect.y + rect.h / 2,
+      };
+      const gaze = computeCursorGaze(center, lookTarget);
       return {
         x: spot.x,
         y: spot.y,
         facing: spot.facing,
+        wanderEmotion: undefined as CompanionEmotion | undefined,
+        cursorNear: false,
+        gazeX: gaze.gazeX,
+        gazeY: gaze.gazeY,
       };
     }
 
@@ -426,34 +463,56 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         12,
         Math.min(viewport.h - companionSize - 12, companionOverlay.y),
       );
+      const gaze = computeCursorGaze(
+        { x: x + companionSize / 2, y: y + companionSize / 2 },
+        cursorPos,
+      );
       return {
         x,
         y,
         facing: x > viewport.w / 2 ? ("left" as const) : ("right" as const),
+        wanderEmotion: undefined as CompanionEmotion | undefined,
+        cursorNear: false,
+        gazeX: gaze.gazeX,
+        gazeY: gaze.gazeY,
       };
     }
 
     if (isPreview) {
+      const px = Math.max(16, viewport.w - companionSize - 64);
+      const py = Math.max(16, viewport.h - companionSize - 92);
+      const gaze = computeCursorGaze(
+        { x: px + companionSize / 2, y: py + companionSize / 2 },
+        cursorPos,
+      );
       return {
-        x: Math.max(16, viewport.w - companionSize - 64),
-        y: Math.max(16, viewport.h - companionSize - 92),
+        x: px,
+        y: py,
         facing: "left" as const,
+        wanderEmotion: undefined as CompanionEmotion | undefined,
+        cursorNear: false,
+        gazeX: cursorPos ? gaze.gazeX : -0.55,
+        gazeY: cursorPos ? gaze.gazeY : 0,
       };
     }
 
     const activeApp =
       liveSession?.turns?.[liveSession.turns.length - 1]?.active_app ?? null;
-    const waypoint = computeWanderWaypoint(
+    const choreography = stepChoreography({
       viewport,
-      wanderTick,
-      activeApp,
+      tick: wanderTick,
+      cursor: cursorPos,
       companionSize,
-    );
+      activeApp,
+    });
     return {
-      x: waypoint.x,
-      y: waypoint.y,
-      facing: waypoint.facing,
-      wanderEmotion: waypoint.emotion,
+      x: choreography.x,
+      y: choreography.y,
+      facing: choreography.facing,
+      wanderEmotion: choreography.emotion,
+      cursorNear: choreography.cursorNear,
+      gazeX: choreography.gazeX,
+      gazeY: choreography.gazeY,
     };
   }, [
     rect,
@@ -464,6 +523,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     isPreview,
     liveSession,
     wanderTick,
+    cursorPos,
   ]);
 
   const targetKey =
@@ -610,7 +670,14 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
       return "pointing";
     }
 
-    if (companionOverlay?.emotion) {
+    if (targetCompanionAnchor.cursorNear && !isPreview && companionOverlay?.mode !== "bonk") {
+      return targetCompanionAnchor.wanderEmotion ?? "curious";
+    }
+
+    if (
+      companionOverlay?.emotion &&
+      (companionOverlay.mode !== "wander" || companionOverlay.emotion !== "idle")
+    ) {
       return normalizeCompanionEmotion(companionOverlay.emotion);
     }
 
@@ -694,13 +761,15 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
             emotion={displayedEmotion}
             actionKind={step?.action_kind ?? null}
             facing={targetCompanionAnchor.facing}
+            gazeX={targetCompanionAnchor.gazeX}
+            gazeY={targetCompanionAnchor.gazeY}
             size={companionSize}
           />
 
           {isScreendayRecording && !rect && (
             <div
               data-testid="screenday-companion-indicator"
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#111215]/90 border border-white/15 text-[9.5px] font-medium text-[#A1A1AA] shadow"
+              className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#0D0E12]/[0.58] backdrop-blur-xl border border-white/[0.10] text-[9.5px] font-medium text-[#A1A1AA] shadow-[0_4px_12px_rgba(0,0,0,0.18)]"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-[#E4E4E7]" />
               Diary
@@ -785,7 +854,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         className="absolute inset-0 w-full h-full pointer-events-none"
       />
 
-      {/* Crisp monochrome bounding box with dark outer halo */}
+      {/* Calm, non-flashing hairline target frame */}
       <div
         data-testid="overlay-highlight-box"
         data-high-contrast={highContrast ? "true" : "false"}
@@ -798,8 +867,9 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
           borderStyle: "solid",
           borderColor,
           boxShadow: boxHalo,
+          backgroundColor: boxFillTint,
         }}
-        className="absolute rounded-md pointer-events-none"
+        className="gl-pulse-box absolute rounded-md pointer-events-none"
       />
 
       {/* Compact neutral step chip anchored cleanly beside the highlight box */}
@@ -808,10 +878,10 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         style={{
           left: `${badgePos.x}px`,
           top: `${badgePos.y}px`,
-          borderColor: highContrast ? "#FACC15" : "rgba(255, 255, 255, 0.15)",
+          borderColor: highContrast ? "#FACC15" : "rgba(255, 255, 255, 0.10)",
           color: highContrast ? "#FACC15" : "#A1A1AA",
         }}
-        className="absolute px-2 py-0.5 rounded-md bg-[#111215]/90 border text-[10px] font-medium tracking-tight shadow-md backdrop-blur-md pointer-events-none tabular-nums"
+        className="absolute px-2 py-0.5 rounded-md bg-[#0D0E12]/[0.58] border text-[10px] font-medium tracking-tight shadow-[0_6px_18px_rgba(0,0,0,0.22)] backdrop-blur-xl pointer-events-none tabular-nums"
       >
         {stepNum} / {totalSteps}
       </div>
@@ -837,7 +907,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
               : undefined,
             backgroundPosition: `-${magGeom.sx * cssBgScale}px -${magGeom.sy * cssBgScale}px`,
           }}
-          className="absolute rounded-full bg-[#111215]/90 overflow-hidden pointer-events-none flex items-center justify-center"
+          className="absolute rounded-full bg-[#0D0E12]/[0.72] backdrop-blur-xl overflow-hidden pointer-events-none flex items-center justify-center"
         >
           <span
             data-testid="magnifier-zoom-badge"
@@ -849,7 +919,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
             className={`absolute bottom-1 px-1.5 py-0.2 rounded text-[10px] font-semibold ${
               highContrast
                 ? ""
-                : "bg-[#111215]/90 border border-white/15 text-[#F4F4F5]"
+                : "bg-[#0D0E12]/70 border border-white/[0.12] text-[#F4F4F5]"
             }`}
           >
             {magGeom.zoom}×

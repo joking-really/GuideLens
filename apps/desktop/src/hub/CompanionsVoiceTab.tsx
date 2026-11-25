@@ -67,6 +67,20 @@ const STAGE_ACTIONS: ReadonlyArray<{
     actionKind: "type",
     bubble: "Entering text…",
   },
+  {
+    id: "dance",
+    label: "Dance",
+    emotion: "dance",
+    actionKind: null,
+    bubble: "Grooving in sync.",
+  },
+  {
+    id: "play",
+    label: "Play",
+    emotion: "play",
+    actionKind: null,
+    bubble: "Playful pounce!",
+  },
 ];
 
 export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
@@ -280,7 +294,7 @@ export const CompanionsVoiceTab: React.FC<CompanionsVoiceTabProps> = ({
 
           {/* Quiet Ghost Reaction Buttons */}
           <div className="space-y-2">
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
               {STAGE_ACTIONS.map((action) => (
                 <button
                   key={action.id}

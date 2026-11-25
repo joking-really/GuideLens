@@ -106,11 +106,13 @@ describe("OverlayCanvas", () => {
       top: "180px",
       width: "32px",
       height: "32px",
-      borderColor: "rgba(255, 255, 255, 0.92)",
+      borderColor: "rgba(255, 255, 255, 0.58)",
+      backgroundColor: "rgba(255, 255, 255, 0.03)",
     });
-    expect(screen.getByTestId("overlay-step-badge")).toHaveTextContent(
-      "1 / 4",
-    );
+    const stepBadge = screen.getByTestId("overlay-step-badge");
+    expect(stepBadge).toHaveTextContent("1 / 4");
+    expect(stepBadge.className).toContain("bg-[#0D0E12]/[0.58]");
+    expect(stepBadge.className).toContain("backdrop-blur-xl");
     expect(screen.getByTestId("companion-speech-bubble")).toHaveTextContent(
       "1 / 4",
     );
@@ -222,5 +224,53 @@ describe("OverlayCanvas", () => {
     expect(screen.getByTestId("companion-sprite")).toHaveAttribute("data-companion", "anime_guide");
     expect(screen.getByTestId("companion-sprite")).toHaveAttribute("data-emotion", "celebrate");
     expect(screen.getByTestId("companion-fx-celebrate")).toBeInTheDocument();
+  });
+
+  it("wires live overlay-cursor gaze tracking and cursor-proximity curious/play choreography", async () => {
+    render(<OverlayCanvas />);
+
+    await act(async () => {
+      mocks.emitMockEvent("overlay-companion", {
+        mode: "wander",
+        companion_id: "pixel_cat",
+        emotion: "idle",
+        wander: true,
+        x: null,
+        y: null,
+        bubble_text: null,
+        screenday_recording: false,
+      });
+    });
+
+    const vw = window.innerWidth || 1920;
+    const vh = window.innerHeight || 1080;
+    const compCenterX = vw - 64 - 36 + 32;
+    const compCenterY = vh - 64 - 52 + 32;
+
+    // Cursor ~100px to the left -> curious reaction looking left
+    await act(async () => {
+      mocks.emitMockEvent("overlay-cursor", {
+        x: compCenterX - 100,
+        y: compCenterY - 10,
+      });
+    });
+
+    const sprite = screen.getByTestId("companion-sprite");
+    expect(sprite).toHaveAttribute("data-emotion", "curious");
+    expect(sprite).toHaveAttribute("data-facing", "left");
+    expect(Number(sprite.getAttribute("data-gaze-x"))).toBeLessThan(0);
+
+    // Cursor very close (~30px to the right) -> playful reaction looking right
+    await act(async () => {
+      mocks.emitMockEvent("overlay-cursor", {
+        x: compCenterX + 30,
+        y: compCenterY + 12,
+      });
+    });
+
+    expect(sprite).toHaveAttribute("data-emotion", "play");
+    expect(sprite).toHaveAttribute("data-facing", "right");
+    expect(Number(sprite.getAttribute("data-gaze-x"))).toBeGreaterThan(0);
+    expect(Number(sprite.getAttribute("data-gaze-y"))).toBeGreaterThan(0);
   });
 });

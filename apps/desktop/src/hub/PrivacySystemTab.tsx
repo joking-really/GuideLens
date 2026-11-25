@@ -373,30 +373,49 @@ export const PrivacySystemTab: React.FC<PrivacySystemTabProps> = ({
           </label>
         </section>
 
-        {/* Hotkeys Table */}
-        <section className="rounded-xl bg-[#111317] border border-white/[0.07] divide-y divide-white/[0.06]">
+        {/* Keyboard Shortcuts Table */}
+        <section
+          data-testid="keyboard-shortcuts-section"
+          className="rounded-xl bg-[#111317] border border-white/[0.07] divide-y divide-white/[0.06]"
+        >
           <div className="px-5 py-3.5">
             <h2 className="text-[13.5px] font-semibold text-[#F4F4F5]">
-              Global Hotkeys
+              Keyboard Shortcuts
             </h2>
           </div>
           {(
             [
               {
                 keys: "Ctrl + Space",
-                desc: "Summon / focus GuideLens over any app",
+                desc: "Toggle top bar (companion remains active)",
               },
               {
-                keys: "Click Target",
-                desc: "Auto-advances Live Session after UI settle",
+                keys: "Ctrl + Alt + H",
+                desc: "Hide / show top bar (Companion-only mode)",
+              },
+              {
+                keys: "Ctrl + Alt + M",
+                desc: "Toggle Mic On / Off",
+              },
+              {
+                keys: "Ctrl + Alt + L",
+                desc: "Toggle Live Guidance Session",
+              },
+              {
+                keys: "Ctrl + Alt + D",
+                desc: "Toggle Screen Day Recording",
+              },
+              {
+                keys: "Ctrl + Alt + O",
+                desc: "Switch to Use Local (Ollama)",
+              },
+              {
+                keys: "Ctrl + Alt + A",
+                desc: "Switch to Use Agent (Claude / Codex / Gemini)",
               },
               {
                 keys: "Esc",
-                desc: "Clear active overlay highlight",
-              },
-              {
-                keys: "Tray Icon",
-                desc: "Toggle Screen Day or open Control Center",
+                desc: "Dismiss active step highlight",
               },
             ] as const
           ).map((hk) => (

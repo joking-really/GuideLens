@@ -71,8 +71,8 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
   };
 
   const containerClass = highContrast
-    ? "bg-[#09090B]/95 backdrop-blur-2xl border-2 border-[#FACC15]"
-    : "bg-[#111215]/95 backdrop-blur-2xl border border-white/[0.09]";
+    ? "bg-[#09090B]/[0.88] backdrop-blur-xl border-2 border-[#FACC15] shadow-[0_8px_24px_rgba(0,0,0,0.32)]"
+    : "bg-[#0D0E12]/[0.58] hover:bg-[#0D0E12]/[0.74] focus-within:bg-[#0D0E12]/80 backdrop-blur-xl border border-white/[0.10] shadow-[0_8px_24px_rgba(0,0,0,0.24)]";
 
   if (loading || (liveStatusText && !step && !error)) {
     const statusText =
@@ -90,7 +90,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
         aria-live="polite"
         aria-label="Assistant loading status"
         data-testid="response-loading"
-        className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-2.5 text-[#F4F4F5] shadow-2xl`}
+        className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-2.5 text-[#F4F4F5] transition-colors`}
       >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 text-[13px] text-[#E4E4E7] min-w-0">
@@ -142,7 +142,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
         role="alert"
         aria-label="Brain error and fallback options"
         data-testid="response-error"
-        className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-3 text-[#F4F4F5] shadow-2xl`}
+        className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-3 text-[#F4F4F5] transition-colors`}
       >
         <div className="flex items-start justify-between gap-2">
           <p className="text-[13px] font-medium text-[#F4F4F5] leading-snug">
@@ -201,7 +201,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
       aria-live="polite"
       aria-label="Step guidance response"
       data-testid="response-block"
-      className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-3 text-[#F4F4F5] shadow-2xl transition-all`}
+      className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-3 text-[#F4F4F5] transition-all`}
     >
       {isTerminal && step.terminal_command ? (
         <div data-testid="terminal-variant" className="space-y-2">

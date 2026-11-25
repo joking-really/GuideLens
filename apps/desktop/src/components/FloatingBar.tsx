@@ -19,6 +19,7 @@ import {
   onOverlayCleared,
   onScreenDayFrame,
   onSettingsChanged,
+  onShortcutAction,
   onStepChanged,
   onWindowMoved,
   openSettingsWindow,
@@ -30,6 +31,7 @@ import {
   setSettings,
   startBarDrag,
   startLiveSession,
+  toggleBarOnly,
   toggleMagnify,
   writeSavedBarPosition,
 } from "../lib/ipc";
@@ -43,6 +45,7 @@ import { getCopilotVoiceEngine, type TinyVocaState } from "../lib/tinyVocaClient
 import {
   type AskError,
   type BrainKind,
+  type BrainMode,
   type BrainStatusPayload,
   clampInstruction,
   DEFAULT_SETTINGS,
@@ -341,6 +344,46 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
       }
     });
 
+    const unlistenShortcut = onShortcutAction((ev) => {
+      if (!mounted) return;
+      switch (ev.action) {
+        case "toggle_mic":
+          setLocalSettings((prev) => ({ ...prev, voice_enabled: ev.active }));
+          break;
+        case "toggle_day":
+          setScreendayActive(ev.active);
+          setLocalSettings((prev) => ({ ...prev, screenday_enabled: ev.active }));
+          break;
+        case "use_local":
+          setLocalSettings((prev) => ({ ...prev, brain_mode: "local_vlm" }));
+          break;
+        case "use_agent":
+          setLocalSettings((prev) => ({ ...prev, brain_mode: "agent_cli" }));
+          break;
+        case "toggle_live":
+          if (!ev.active) {
+            voiceEngine.stop();
+          }
+          void getLiveSession()
+            .then((sess) => {
+              if (mounted) {
+                setLiveSession(
+                  sess.session_id && sess.status !== "idle" ? sess : null,
+                );
+              }
+            })
+            .catch(() => {});
+          break;
+        case "toggle_bar_only":
+          if (!ev.active) {
+            focusInput();
+          }
+          break;
+        default:
+          break;
+      }
+    });
+
     return () => {
       mounted = false;
       if (moveSaveTimer !== null) {
@@ -357,6 +400,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
       unlistenFrame.then((fn) => fn()).catch(() => {});
       unlistenClear.then((fn) => fn()).catch(() => {});
       unlistenSettings.then((fn) => fn()).catch(() => {});
+      unlistenShortcut.then((fn) => fn()).catch(() => {});
     };
   }, [focusInput, initialSettings, voiceEngine]);
 
@@ -815,6 +859,19 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
     await openSettingsWindow("/settings", tab);
   };
 
+  const handleSelectBrainMode = useCallback(async (nextMode: BrainMode) => {
+    const updated: Settings = {
+      ...latestSettingsRef.current,
+      brain_mode: nextMode,
+    };
+    setLocalSettings(updated);
+    try {
+      await setSettings(updated);
+    } catch {
+      // Ignore outside Tauri
+    }
+  }, []);
+
   const companionMeta = getCompanionPersona(settings.companion_id);
 
   const deriveCompanionEmotion = (): CompanionEmotion => {
@@ -839,15 +896,20 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
   const companionEmotion = deriveCompanionEmotion();
 
   const barSurfaceClass = settings.high_contrast
-    ? "bg-[#09090B]/95 backdrop-blur-2xl border-2 border-[#FACC15]"
-    : "bg-[#111215]/95 backdrop-blur-2xl border border-white/[0.09]";
+    ? "bg-[#09090B]/[0.88] backdrop-blur-xl border-2 border-[#FACC15] shadow-[0_8px_24px_rgba(0,0,0,0.32)]"
+    : "bg-[#0D0E12]/[0.48] hover:bg-[#0D0E12]/[0.74] focus-within:bg-[#0D0E12]/80 backdrop-blur-xl border border-white/[0.10] shadow-[0_8px_24px_rgba(0,0,0,0.22)] transition-colors";
+
+  const isLocalMode = settings.brain_mode === "local_vlm";
+  const isAgentMode =
+    settings.brain_mode === "agent_cli" || settings.brain_mode === "agent_mcp";
+  const isAutoMode = settings.brain_mode === "auto";
 
   return (
     <div
       data-testid="floating-bar-root"
       className="flex flex-col items-start select-none"
     >
-      {/* Minimalist Obsidian Capsule */}
+      {/* Translucent Frosted Obsidian Capsule */}
       <div
         role="search"
         aria-label="GuideLens Companion Capsule"
@@ -858,7 +920,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
             void startBarDrag();
           }
         }}
-        className={`${barSurfaceClass} w-[620px] max-w-[96vw] h-[50px] rounded-2xl px-2.5 flex items-center gap-1.5 shadow-2xl`}
+        className={`${barSurfaceClass} w-[620px] max-w-[96vw] h-[50px] rounded-2xl px-2.5 flex items-center gap-1`}
       >
         {/* Drag Grip */}
         <div
@@ -894,7 +956,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
         </button>
 
         {/* 2. Borderless Ask Input */}
-        <form onSubmit={handleFormSubmit} className="flex-1 min-w-[140px]">
+        <form onSubmit={handleFormSubmit} className="flex-1 min-w-[110px]">
           <input
             ref={inputRef}
             type="text"
@@ -908,8 +970,65 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
           />
         </form>
 
+        {/* 2b. Compact Quick-Mode Switcher (Local / Agent / Auto) */}
+        <div
+          role="group"
+          aria-label="Quick brain mode"
+          className="shrink-0 flex items-center rounded-lg bg-white/[0.04] border border-white/[0.08] p-0.5 gap-0.5"
+        >
+          <button
+            type="button"
+            onClick={() => void handleSelectBrainMode("local_vlm")}
+            aria-pressed={isLocalMode}
+            aria-label="Use Local Ollama (Ctrl+Alt+O)"
+            title="Use Local Ollama (Ctrl+Alt+O)"
+            data-testid="quick-mode-local"
+            className={`h-6 px-1.5 rounded-md text-[11px] font-medium transition-colors ${
+              isLocalMode
+                ? "bg-white/[0.14] text-[#F4F4F5]"
+                : "text-[#A1A1AA] hover:text-[#F4F4F5]"
+            }`}
+          >
+            Local
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSelectBrainMode("agent_cli")}
+            aria-pressed={isAgentMode}
+            aria-label="Use Agent CLI (Ctrl+Alt+A)"
+            title="Use Agent CLI (Ctrl+Alt+A)"
+            data-testid="quick-mode-agent"
+            className={`h-6 px-1.5 rounded-md text-[11px] font-medium transition-colors ${
+              isAgentMode
+                ? "bg-white/[0.14] text-[#F4F4F5]"
+                : "text-[#A1A1AA] hover:text-[#F4F4F5]"
+            }`}
+          >
+            Agent
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSelectBrainMode("auto")}
+            aria-pressed={isAutoMode}
+            aria-label="Auto brain routing"
+            title="Auto brain routing"
+            data-testid="quick-mode-auto"
+            className={`h-6 px-1.5 rounded-md text-[11px] font-medium transition-colors ${
+              isAutoMode
+                ? "bg-white/[0.14] text-[#F4F4F5]"
+                : "text-[#A1A1AA] hover:text-[#F4F4F5]"
+            }`}
+          >
+            Auto
+          </button>
+        </div>
+
         {/* 3. Monochrome Mic Icon Button */}
-        <div className="gl-minimal-mic shrink-0">
+        <div
+          className="gl-minimal-mic shrink-0"
+          data-testid="mic-shortcut-wrapper"
+          title="Mic (Ctrl+Alt+M)"
+        >
           <VoiceIndicator
             voiceEnabled={settings.voice_enabled}
             sttEngine={settings.stt_engine}
@@ -928,19 +1047,19 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
           aria-pressed={isLiveActive}
           aria-label={
             isLiveActive
-              ? "End live guidance session"
-              : "Start live guidance session"
+              ? "End live guidance session (Ctrl+Alt+L)"
+              : "Start live guidance session (Ctrl+Alt+L)"
           }
           title={
             isLiveActive
-              ? "End live continuous guidance session"
-              : "Start continuous live screen-guiding session"
+              ? "End Live session (Ctrl+Alt+L)"
+              : "Start Live session (Ctrl+Alt+L)"
           }
           data-testid="live-call-toggle"
-          className={`shrink-0 flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-medium border transition-colors focus:outline-none focus:ring-1 focus:ring-white/25 ${
+          className={`shrink-0 flex items-center gap-1 h-7 px-2 rounded-lg text-[11.5px] font-medium border transition-colors focus:outline-none focus:ring-1 focus:ring-white/25 ${
             isLiveActive
-              ? "bg-white/[0.09] text-[#F4F4F5] border-white/[0.14]"
-              : "bg-transparent text-[#A1A1AA] border-transparent hover:text-[#F4F4F5] hover:bg-white/[0.05]"
+              ? "bg-white/[0.10] text-[#F4F4F5] border-white/[0.16]"
+              : "bg-transparent text-[#A1A1AA] border-transparent hover:text-[#F4F4F5] hover:bg-white/[0.06]"
           }`}
         >
           {(isLiveActive || livePending) && (
@@ -961,19 +1080,19 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
           aria-pressed={screendayActive}
           aria-label={
             screendayActive
-              ? "Pause Screen Day visual diary"
-              : "Record My Day with Screen Day"
+              ? "Pause Screen Day visual diary (Ctrl+Alt+D)"
+              : "Record My Day with Screen Day (Ctrl+Alt+D)"
           }
           title={
             screendayActive
-              ? "Screen Day active (click to pause)"
-              : "Screen Day off (click to enable)"
+              ? "Day active — click to pause (Ctrl+Alt+D)"
+              : "Day off — click to enable (Ctrl+Alt+D)"
           }
           data-testid="screenday-toggle"
-          className={`shrink-0 flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-medium border transition-colors focus:outline-none focus:ring-1 focus:ring-white/25 ${
+          className={`shrink-0 flex items-center gap-1 h-7 px-2 rounded-lg text-[11.5px] font-medium border transition-colors focus:outline-none focus:ring-1 focus:ring-white/25 ${
             screendayActive
-              ? "bg-white/[0.09] text-[#F4F4F5] border-white/[0.14]"
-              : "bg-transparent text-[#A1A1AA] border-transparent hover:text-[#F4F4F5] hover:bg-white/[0.05]"
+              ? "bg-white/[0.10] text-[#F4F4F5] border-white/[0.16]"
+              : "bg-transparent text-[#A1A1AA] border-transparent hover:text-[#F4F4F5] hover:bg-white/[0.06]"
           }`}
         >
           {screendayActive && (
@@ -988,14 +1107,40 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
           <span>Day</span>
         </button>
 
-        {/* 6. Clean Control Center Gear/Sliders Icon Button */}
+        {/* 6. Subtle Hide Bar (Companion-Only Mode) Icon Button */}
+        <button
+          type="button"
+          onClick={() => void toggleBarOnly()}
+          aria-label="Hide top bar (Companion-only mode)"
+          data-testid="hide-bar-btn"
+          title="Hide bar — Companion only (Ctrl+Alt+H)"
+          className="shrink-0 flex items-center justify-center w-7 h-7 rounded-lg text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/[0.06] transition-colors focus:outline-none focus:ring-1 focus:ring-white/25"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+            <line x1="1" y1="1" x2="23" y2="23" />
+          </svg>
+        </button>
+
+        {/* 7. Clean Control Center Gear/Sliders Icon Button */}
         <button
           type="button"
           onClick={() => void handleOpenControlCenter("overview")}
           aria-label="Open Control Center"
           data-testid="open-settings-btn"
           title="Open GuideLens Control Center"
-          className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/[0.06] transition-colors focus:outline-none focus:ring-1 focus:ring-white/25"
+          className="shrink-0 flex items-center justify-center w-7 h-7 rounded-lg text-[#A1A1AA] hover:text-[#F4F4F5] hover:bg-white/[0.06] transition-colors focus:outline-none focus:ring-1 focus:ring-white/25"
         >
           <svg
             width="15"
