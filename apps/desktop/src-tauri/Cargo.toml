@@ -42,7 +42,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 xcap = "0.0.14"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 axum = "0.7"
-rand = "0.8"
+rand = "0.10"
 hex = "0.4"
 dirs = "5"
 
