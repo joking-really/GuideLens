@@ -19,8 +19,10 @@ import {
   type BrainStatusPayload,
   clampInstruction,
   type CompanionId,
+  type CompiledPlaybookDto,
   type ConnectionTestResult,
   DEFAULT_SETTINGS,
+  type DefaultOptionsResponse,
   type DetectedAgent,
   type HistoryDetail,
   type HistorySession,
@@ -30,6 +32,7 @@ import {
   type KnowledgeGraphDto,
   type LatencyBreakdown,
   type LatencyStats,
+  type LearningStatsDto,
   type LiveSessionState,
   type LiveSessionStatus,
   type LiveSessionTurn,
@@ -37,6 +40,7 @@ import {
   type OllamaPullProgressPayload,
   type OllamaStatus,
   type OverlayCompanionPayload,
+  type PlaybookStepDto,
   type RectPx,
   type ResolvedStep,
   type ScreenDayDetailDto,
@@ -244,6 +248,16 @@ export function normalizeAskResponse(raw: unknown): AskResponse {
           : null,
     monitor,
     latency: normalizeLatency(obj.latency),
+    resolution_tier:
+      typeof obj.resolution_tier === "string" ? obj.resolution_tier : null,
+    tokens_saved:
+      typeof obj.tokens_saved === "number" && Number.isFinite(obj.tokens_saved)
+        ? Math.max(0, Math.round(obj.tokens_saved))
+        : null,
+    playbook_id:
+      typeof obj.playbook_id === "string" && obj.playbook_id.trim().length > 0
+        ? obj.playbook_id
+        : null,
   };
 }
 
@@ -325,14 +339,20 @@ export function parseAskError(err: unknown): AskError {
 export async function ask(
   query: string,
   brainOverride?: BrainKind,
+  forceAi?: boolean,
 ): Promise<AskResponse> {
   try {
-    const res = await invoke<unknown>("ask", {
+    const payload: Record<string, unknown> = {
       query,
       brain: brainOverride ?? null,
       brainOverride: brainOverride ?? null,
       brain_override: brainOverride ?? null,
-    });
+    };
+    if (forceAi !== undefined) {
+      payload.forceAi = forceAi;
+      payload.force_ai = forceAi;
+    }
+    const res = await invoke<unknown>("ask", payload);
     return normalizeAskResponse(res);
   } catch (err) {
     throw parseAskError(err);
@@ -440,6 +460,14 @@ function normalizeSettings(
         ? obj.summary_byo_model
         : DEFAULT_SETTINGS.summary_byo_model,
     bar_position: barPos,
+    bar_opacity:
+      typeof obj.bar_opacity === "number" && Number.isFinite(obj.bar_opacity)
+        ? Math.min(0.85, Math.max(0.12, obj.bar_opacity))
+        : DEFAULT_SETTINGS.bar_opacity,
+    bar_blur_enabled:
+      typeof obj.bar_blur_enabled === "boolean"
+        ? obj.bar_blur_enabled
+        : DEFAULT_SETTINGS.bar_blur_enabled,
   };
 }
 
@@ -1047,12 +1075,15 @@ export async function closeCurrentWindow(): Promise<void> {
 
 export async function resizeBarWindow(
   height: number,
-  width = 480,
+  width = 640,
 ): Promise<void> {
   try {
     const win = getCurrentWindow();
     await win.setSize(
-      new LogicalSize(Math.max(480, Math.round(width)), Math.max(52, Math.round(height))),
+      new LogicalSize(
+        Math.max(520, Math.round(width)),
+        Math.max(54, Math.round(height)),
+      ),
     );
   } catch {
     // No-op outside Tauri webview
@@ -1093,6 +1124,7 @@ export async function restoreBarPosition(
   try {
     const win = getCurrentWindow();
     await win.setPosition(new PhysicalPosition(target.x, target.y));
+    await invoke("clamp_bar_position").catch(() => {});
   } catch {
     // Ignore outside Tauri runtime
   }
@@ -1824,4 +1856,209 @@ export async function getLatencyStats(limit = 25): Promise<LatencyStats> {
   const count =
     typeof obj.count === "number" ? Math.max(0, obj.count) : recent.length;
   return { recent, average, count };
+}
+
+// ============================================================================
+// GuideLens v2.3 Playbooks & Acrylic Glass Commands
+// ============================================================================
+
+function normalizePlaybookStep(raw: unknown, idx: number): PlaybookStepDto {
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    step_number:
+      typeof obj.step_number === "number" ? obj.step_number : idx + 1,
+    instruction_line: clampInstruction(String(obj.instruction_line ?? "")),
+    target_name:
+      typeof obj.target_name === "string" ? obj.target_name : null,
+    control_type:
+      typeof obj.control_type === "string" ? obj.control_type : null,
+    shortcut: typeof obj.shortcut === "string" ? obj.shortcut : null,
+    terminal_command:
+      typeof obj.terminal_command === "string" ? obj.terminal_command : null,
+    action_kind:
+      typeof obj.action_kind === "string" ? obj.action_kind : null,
+    spoken_text:
+      typeof obj.spoken_text === "string" ? obj.spoken_text : null,
+    norm_bbox: normalizeBBox(obj.norm_bbox),
+  };
+}
+
+function normalizeCompiledPlaybook(raw: unknown): CompiledPlaybookDto {
+  const obj = isRecord(raw) ? raw : {};
+  const steps = Array.isArray(obj.steps)
+    ? obj.steps.map((s, i) => normalizePlaybookStep(s, i))
+    : [];
+  return {
+    id: String(obj.id ?? ""),
+    app_exe: String(obj.app_exe ?? ""),
+    view_key: String(obj.view_key ?? ""),
+    canonical_goal: String(obj.canonical_goal ?? ""),
+    display_label: String(obj.display_label ?? obj.canonical_goal ?? ""),
+    confidence_tier:
+      typeof obj.confidence_tier === "string"
+        ? obj.confidence_tier
+        : "inferred",
+    confidence_score:
+      typeof obj.confidence_score === "number" &&
+      Number.isFinite(obj.confidence_score)
+        ? obj.confidence_score
+        : 0.5,
+    success_count: Math.max(0, Number(obj.success_count) || 0),
+    failure_count: Math.max(0, Number(obj.failure_count) || 0),
+    tokens_saved_est: Math.max(0, Number(obj.tokens_saved_est) || 0),
+    steps,
+    updated_at: Number(obj.updated_at) || 0,
+  };
+}
+
+export async function getDefaultOptions(
+  appExe?: string | null,
+  limit = 4,
+): Promise<DefaultOptionsResponse> {
+  const raw = await invokeWithFallback<unknown>(
+    "get_default_options",
+    {
+      appExe: appExe ?? null,
+      app_exe: appExe ?? null,
+      limit,
+    },
+    () => ({
+      active_app: "",
+      window_title: "",
+      options: [],
+      total_tokens_saved: 0,
+    }),
+  );
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    active_app: typeof obj.active_app === "string" ? obj.active_app : "",
+    window_title: typeof obj.window_title === "string" ? obj.window_title : "",
+    options: Array.isArray(obj.options)
+      ? obj.options.map(normalizeCompiledPlaybook)
+      : [],
+    total_tokens_saved: Math.max(0, Number(obj.total_tokens_saved) || 0),
+  };
+}
+
+export async function runPlaybook(
+  playbookId: string,
+  forceAi = false,
+): Promise<AskResponse> {
+  try {
+    const res = await invoke<unknown>("run_playbook", {
+      playbookId,
+      playbook_id: playbookId,
+      forceAi,
+      force_ai: forceAi,
+    });
+    return normalizeAskResponse(res);
+  } catch (err) {
+    throw parseAskError(err);
+  }
+}
+
+export async function reportGuidanceFeedback(
+  sessionId: string,
+  playbookId: string | null | undefined,
+  worked: boolean,
+): Promise<void> {
+  await invokeWithFallback<void>(
+    "report_guidance_feedback",
+    {
+      sessionId,
+      session_id: sessionId,
+      playbookId: playbookId ?? null,
+      playbook_id: playbookId ?? null,
+      worked,
+    },
+    () => undefined,
+  );
+}
+
+export async function listCompiledPlaybooks(
+  appFilter?: string | null,
+): Promise<CompiledPlaybookDto[]> {
+  const raw = await invokeWithFallback<unknown>(
+    "list_compiled_playbooks",
+    {
+      appFilter: appFilter ?? null,
+      app_filter: appFilter ?? null,
+    },
+    () => [],
+  );
+  return Array.isArray(raw) ? raw.map(normalizeCompiledPlaybook) : [];
+}
+
+export async function deletePlaybook(playbookId: string): Promise<void> {
+  await invokeWithFallback<void>(
+    "delete_playbook",
+    {
+      playbookId,
+      playbook_id: playbookId,
+    },
+    () => undefined,
+  );
+}
+
+export async function getLearningStats(): Promise<LearningStatsDto> {
+  const raw = await invokeWithFallback<unknown>(
+    "get_learning_stats",
+    undefined,
+    () => ({
+      total_playbooks: 0,
+      verified_playbooks: 0,
+      stale_playbooks: 0,
+      total_tier0_hits: 0,
+      total_tokens_saved: 0,
+    }),
+  );
+  const obj = isRecord(raw) ? raw : {};
+  return {
+    total_playbooks: Math.max(0, Number(obj.total_playbooks) || 0),
+    verified_playbooks: Math.max(0, Number(obj.verified_playbooks) || 0),
+    stale_playbooks: Math.max(0, Number(obj.stale_playbooks) || 0),
+    total_tier0_hits: Math.max(0, Number(obj.total_tier0_hits) || 0),
+    total_tokens_saved: Math.max(0, Number(obj.total_tokens_saved) || 0),
+  };
+}
+
+export async function setBarGlass(
+  opacity: number,
+  blurEnabled: boolean,
+  highContrast: boolean,
+): Promise<void> {
+  await invokeWithFallback<void>(
+    "set_bar_glass",
+    {
+      opacity,
+      blurEnabled,
+      blur_enabled: blurEnabled,
+      highContrast,
+      high_contrast: highContrast,
+    },
+    () => undefined,
+  );
+}
+
+export async function saveBarPosition(x: number, y: number): Promise<void> {
+  await invokeWithFallback<void>(
+    "save_bar_position",
+    {
+      x: Math.round(x),
+      y: Math.round(y),
+    },
+    () => undefined,
+  );
+}
+
+export async function clampBarPosition(): Promise<{ x: number; y: number } | null> {
+  const raw = await invokeWithFallback<unknown>(
+    "clamp_bar_position",
+    undefined,
+    () => null,
+  );
+  if (Array.isArray(raw) && raw.length >= 2) {
+    return { x: Number(raw[0]) || 0, y: Number(raw[1]) || 0 };
+  }
+  return null;
 }

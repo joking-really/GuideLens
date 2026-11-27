@@ -379,6 +379,14 @@ fn default_screenday_skip_private() -> bool {
     true
 }
 
+fn default_bar_opacity() -> f64 {
+    0.28
+}
+
+fn default_bar_blur_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "default_brain_mode")]
@@ -443,6 +451,10 @@ pub struct Settings {
     pub summary_byo_provider: Option<String>,
     #[serde(default)]
     pub summary_byo_model: Option<String>,
+    #[serde(default = "default_bar_opacity")]
+    pub bar_opacity: f64,
+    #[serde(default = "default_bar_blur_enabled")]
+    pub bar_blur_enabled: bool,
 }
 
 impl Default for Settings {
@@ -479,6 +491,8 @@ impl Default for Settings {
             summary_brain_mode: None,
             summary_byo_provider: None,
             summary_byo_model: None,
+            bar_opacity: default_bar_opacity(),
+            bar_blur_enabled: default_bar_blur_enabled(),
         }
     }
 }
@@ -502,6 +516,65 @@ pub struct AskResponse {
     pub monitor: Option<MonitorInfo>,
     #[serde(default)]
     pub latency: Option<LatencyBreakdown>,
+    #[serde(default)]
+    pub resolution_tier: Option<String>,
+    #[serde(default)]
+    pub tokens_saved: Option<u32>,
+    #[serde(default)]
+    pub playbook_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlaybookStepDto {
+    pub step_number: u32,
+    pub instruction_line: String,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub control_type: Option<String>,
+    #[serde(default)]
+    pub shortcut: Option<String>,
+    #[serde(default)]
+    pub terminal_command: Option<String>,
+    #[serde(default)]
+    pub action_kind: Option<String>,
+    #[serde(default)]
+    pub spoken_text: Option<String>,
+    #[serde(default)]
+    pub norm_bbox: Option<[f64; 4]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompiledPlaybookDto {
+    pub id: String,
+    pub app_exe: String,
+    pub view_key: String,
+    pub canonical_goal: String,
+    pub display_label: String,
+    pub confidence_tier: String,
+    pub confidence_score: f64,
+    pub success_count: i64,
+    pub failure_count: i64,
+    pub tokens_saved_est: i64,
+    pub steps: Vec<PlaybookStepDto>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DefaultOptionsResponse {
+    pub active_app: String,
+    pub window_title: String,
+    pub options: Vec<CompiledPlaybookDto>,
+    pub total_tokens_saved: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LearningStatsDto {
+    pub total_playbooks: usize,
+    pub verified_playbooks: usize,
+    pub stale_playbooks: usize,
+    pub total_tier0_hits: i64,
+    pub total_tokens_saved: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -932,6 +1005,71 @@ mod tests {
         assert_eq!(defaults.summary_brain_mode, None);
         assert_eq!(defaults.summary_byo_provider, None);
         assert_eq!(defaults.summary_byo_model, None);
+        assert!((settings.bar_opacity - 0.28).abs() < 1e-9);
+        assert!(settings.bar_blur_enabled);
+        assert!((defaults.bar_opacity - 0.28).abs() < 1e-9);
+        assert!(defaults.bar_blur_enabled);
+    }
+
+    #[test]
+    fn v23_playbook_dtos_and_ask_response_roundtrip() {
+        let legacy_ask = r#"{
+            "session_id": "s-1",
+            "brain": "local_vlm",
+            "plan": {"mode": "guide", "total_steps": 1, "steps": [{"step_number": 1, "instruction_line": "Click Save"}]},
+            "resolved_steps": [],
+            "capture_path": null,
+            "monitor": null
+        }"#;
+        let decoded_ask: AskResponse = serde_json::from_str(legacy_ask).expect("legacy AskResponse");
+        assert_eq!(decoded_ask.resolution_tier, None);
+        assert_eq!(decoded_ask.tokens_saved, None);
+        assert_eq!(decoded_ask.playbook_id, None);
+
+        let pb = CompiledPlaybookDto {
+            id: "pb-1".to_string(),
+            app_exe: "Code.exe".to_string(),
+            view_key: "code.exe:workspace".to_string(),
+            canonical_goal: "Open integrated terminal".to_string(),
+            display_label: "Open integrated terminal".to_string(),
+            confidence_tier: "verified".to_string(),
+            confidence_score: 0.9,
+            success_count: 2,
+            failure_count: 0,
+            tokens_saved_est: 3600,
+            steps: vec![PlaybookStepDto {
+                step_number: 1,
+                instruction_line: "Click Terminal -> New Terminal".to_string(),
+                target_name: Some("New Terminal".to_string()),
+                control_type: Some("MenuItem".to_string()),
+                shortcut: Some("Ctrl+Shift+`".to_string()),
+                terminal_command: None,
+                action_kind: Some("click".to_string()),
+                spoken_text: Some("Click New Terminal!".to_string()),
+                norm_bbox: Some([100.0, 20.0, 80.0, 24.0]),
+            }],
+            updated_at: 1_764_000_000,
+        };
+        let resp = DefaultOptionsResponse {
+            active_app: "Code.exe".to_string(),
+            window_title: "GuideLens - Visual Studio Code".to_string(),
+            options: vec![pb.clone()],
+            total_tokens_saved: 3600,
+        };
+        let encoded = serde_json::to_string(&resp).unwrap();
+        let decoded: DefaultOptionsResponse = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, resp);
+
+        let stats = LearningStatsDto {
+            total_playbooks: 3,
+            verified_playbooks: 2,
+            stale_playbooks: 1,
+            total_tier0_hits: 5,
+            total_tokens_saved: 9000,
+        };
+        let s_enc = serde_json::to_string(&stats).unwrap();
+        let s_dec: LearningStatsDto = serde_json::from_str(&s_enc).unwrap();
+        assert_eq!(s_dec, stats);
     }
 
     #[test]

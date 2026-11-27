@@ -1,12 +1,13 @@
 use crate::capture::captures_dir;
 use crate::types::{
-    BrainKind, HistoryDetail, HistorySession, HistoryStep, KgEdgeDto, KgNodeDto, KnowledgeGraphDto,
-    ScreenDayDetailDto, ScreenDayFrameDto, ScreenDayMeetingGroup, ScreenDayProjectGroup,
-    ScreenDaySummaryDto, SessionGraphSummaryDto, Settings, Step,
+    BrainKind, CompiledPlaybookDto, HistoryDetail, HistorySession, HistoryStep, KgEdgeDto,
+    KgNodeDto, KnowledgeGraphDto, LearningStatsDto, PlaybookStepDto, ScreenDayDetailDto,
+    ScreenDayFrameDto, ScreenDayMeetingGroup, ScreenDayProjectGroup, ScreenDaySummaryDto,
+    SessionGraphSummaryDto, Settings, Step,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -14,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 2;
+pub const CURRENT_SCHEMA_VERSION: i32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppPreference {
@@ -224,9 +225,73 @@ impl DbState {
 
             CREATE INDEX IF NOT EXISTS idx_screenday_days_updated
                 ON screenday_days(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS kg_playbooks (
+                id TEXT PRIMARY KEY,
+                app_exe TEXT NOT NULL,
+                view_key TEXT NOT NULL,
+                canonical_goal TEXT NOT NULL,
+                display_label TEXT NOT NULL,
+                aliases_json TEXT NOT NULL DEFAULT '[]',
+                confidence_tier TEXT NOT NULL DEFAULT 'inferred',
+                confidence_score REAL NOT NULL DEFAULT 0.5,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                failure_count INTEGER NOT NULL DEFAULT 0,
+                tier0_hits INTEGER NOT NULL DEFAULT 0,
+                tokens_saved_est INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_kg_playbooks_app
+                ON kg_playbooks(LOWER(app_exe), confidence_tier, success_count DESC, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS kg_playbook_steps (
+                playbook_id TEXT NOT NULL REFERENCES kg_playbooks(id) ON DELETE CASCADE,
+                step_number INTEGER NOT NULL,
+                instruction_line TEXT NOT NULL,
+                target_name TEXT,
+                control_type TEXT,
+                shortcut TEXT,
+                terminal_command TEXT,
+                action_kind TEXT,
+                spoken_text TEXT,
+                norm_bbox_json TEXT,
+                PRIMARY KEY (playbook_id, step_number)
+            );
             "#,
         )
         .map_err(|e| format!("SQLite schema migration failed: {}", e))?;
+
+        ensure_column_exists(
+            conn,
+            "kg_edges",
+            "confidence_tier",
+            "ALTER TABLE kg_edges ADD COLUMN confidence_tier TEXT NOT NULL DEFAULT 'inferred'",
+        )?;
+        ensure_column_exists(
+            conn,
+            "kg_edges",
+            "failure_count",
+            "ALTER TABLE kg_edges ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column_exists(
+            conn,
+            "kg_playbooks",
+            "aliases_json",
+            "ALTER TABLE kg_playbooks ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column_exists(
+            conn,
+            "kg_playbooks",
+            "tier0_hits",
+            "ALTER TABLE kg_playbooks ADD COLUMN tier0_hits INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column_exists(
+            conn,
+            "kg_playbooks",
+            "tokens_saved_est",
+            "ALTER TABLE kg_playbooks ADD COLUMN tokens_saved_est INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         Ok(())
     }
@@ -559,23 +624,35 @@ impl DbState {
             .as_ref()
             .and_then(|b| serde_json::to_string(b).ok());
         let initial_success = edge.success_count.max(1);
+        let confidence_tier = if edge.relation == "verified_step" {
+            "verified"
+        } else {
+            "inferred"
+        };
         conn.execute(
             "INSERT INTO kg_edges (
                 id, from_node, to_node, relation, intent,
                 control_name, control_type, shortcut, norm_bbox_json,
-                success_count, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                success_count, updated_at, confidence_tier, failure_count
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)
              ON CONFLICT(id) DO UPDATE SET
                from_node = excluded.from_node,
                to_node = excluded.to_node,
-               relation = excluded.relation,
+               relation = CASE
+                 WHEN kg_edges.relation = 'verified_step' OR excluded.relation = 'verified_step' THEN 'verified_step'
+                 ELSE excluded.relation
+               END,
                intent = excluded.intent,
                control_name = COALESCE(excluded.control_name, kg_edges.control_name),
                control_type = COALESCE(excluded.control_type, kg_edges.control_type),
                shortcut = COALESCE(excluded.shortcut, kg_edges.shortcut),
                norm_bbox_json = COALESCE(excluded.norm_bbox_json, kg_edges.norm_bbox_json),
                success_count = kg_edges.success_count + CASE WHEN excluded.success_count > 0 THEN excluded.success_count ELSE 1 END,
-               updated_at = excluded.updated_at",
+               updated_at = excluded.updated_at,
+               confidence_tier = CASE
+                 WHEN kg_edges.confidence_tier = 'verified' OR excluded.confidence_tier = 'verified' THEN 'verified'
+                 ELSE kg_edges.confidence_tier
+               END",
             params![
                 edge.id,
                 edge.from_node,
@@ -587,7 +664,8 @@ impl DbState {
                 edge.shortcut,
                 norm_bbox_json,
                 initial_success,
-                edge.updated_at
+                edge.updated_at,
+                confidence_tier
             ],
         )
         .map_err(|e| format!("Failed to upsert kg_edge: {}", e))?;
@@ -907,6 +985,569 @@ impl DbState {
                 .map_err(|e| format!("Failed to query latest screenday dhash: {}", e)),
         }
     }
+
+    pub fn get_session_meta(&self, session_id: &str) -> Result<Option<(String, String)>, String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        conn.query_row(
+            "SELECT active_app, user_query FROM sessions WHERE id = ?1",
+            params![session_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to query session meta: {}", e))
+    }
+
+    pub fn mark_session_steps_completed(&self, session_id: &str) -> Result<(), String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        conn.execute(
+            "UPDATE steps SET completed = 1 WHERE session_id = ?1",
+            params![session_id],
+        )
+        .map_err(|e| format!("Failed to mark session steps completed: {}", e))?;
+        Ok(())
+    }
+
+    pub fn upsert_compiled_playbook(
+        &self,
+        playbook: &CompiledPlaybookDto,
+        aliases: &[String],
+    ) -> Result<(), String> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        let aliases_json =
+            serde_json::to_string(aliases).unwrap_or_else(|_| "[]".to_string());
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("Failed to begin playbook transaction: {}", e))?;
+
+        tx.execute(
+            "INSERT INTO kg_playbooks (
+                id, app_exe, view_key, canonical_goal, display_label,
+                aliases_json, confidence_tier, confidence_score,
+                success_count, failure_count, tier0_hits, tokens_saved_est, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12)
+             ON CONFLICT(id) DO UPDATE SET
+                app_exe = excluded.app_exe,
+                view_key = excluded.view_key,
+                canonical_goal = excluded.canonical_goal,
+                display_label = excluded.display_label,
+                aliases_json = excluded.aliases_json,
+                confidence_tier = excluded.confidence_tier,
+                confidence_score = excluded.confidence_score,
+                success_count = excluded.success_count,
+                failure_count = excluded.failure_count,
+                tokens_saved_est = MAX(kg_playbooks.tokens_saved_est, excluded.tokens_saved_est),
+                updated_at = excluded.updated_at",
+            params![
+                playbook.id,
+                playbook.app_exe,
+                playbook.view_key,
+                playbook.canonical_goal,
+                playbook.display_label,
+                aliases_json,
+                playbook.confidence_tier,
+                playbook.confidence_score,
+                playbook.success_count,
+                playbook.failure_count,
+                playbook.tokens_saved_est,
+                playbook.updated_at
+            ],
+        )
+        .map_err(|e| format!("Failed to upsert kg_playbooks: {}", e))?;
+
+        tx.execute(
+            "DELETE FROM kg_playbook_steps WHERE playbook_id = ?1",
+            params![playbook.id],
+        )
+        .map_err(|e| format!("Failed to replace kg_playbook_steps: {}", e))?;
+
+        for (idx, step) in playbook.steps.iter().enumerate() {
+            let step_num = if step.step_number > 0 {
+                step.step_number
+            } else {
+                (idx + 1) as u32
+            };
+            let norm_bbox_json = step
+                .norm_bbox
+                .as_ref()
+                .and_then(|b| serde_json::to_string(b).ok());
+            tx.execute(
+                "INSERT OR REPLACE INTO kg_playbook_steps (
+                    playbook_id, step_number, instruction_line, target_name,
+                    control_type, shortcut, terminal_command, action_kind,
+                    spoken_text, norm_bbox_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    playbook.id,
+                    step_num,
+                    Step::clamp_instruction(&step.instruction_line),
+                    step.target_name,
+                    step.control_type,
+                    step.shortcut,
+                    step.terminal_command,
+                    step.action_kind,
+                    step.spoken_text,
+                    norm_bbox_json
+                ],
+            )
+            .map_err(|e| format!("Failed to insert kg_playbook_steps: {}", e))?;
+        }
+
+        tx.commit()
+            .map_err(|e| format!("Failed to commit playbook transaction: {}", e))?;
+        Ok(())
+    }
+
+    pub fn list_playbooks_with_meta_for_app(
+        &self,
+        app_exe: &str,
+    ) -> Result<Vec<(CompiledPlaybookDto, Vec<String>, i64)>, String> {
+        let trimmed = app_exe.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let alt = app_exe_alt_variant(trimmed);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, app_exe, view_key, canonical_goal, display_label,
+                        aliases_json, confidence_tier, confidence_score,
+                        success_count, failure_count, tier0_hits, tokens_saved_est, updated_at
+                 FROM kg_playbooks
+                 WHERE LOWER(app_exe) = LOWER(?1) OR LOWER(app_exe) = LOWER(?2)
+                 ORDER BY
+                    CASE confidence_tier WHEN 'verified' THEN 0 WHEN 'inferred' THEN 1 ELSE 2 END,
+                    success_count DESC,
+                    updated_at DESC",
+            )
+            .map_err(|e| format!("Failed to prepare list_playbooks_for_app: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![trimmed, alt], decode_playbook_meta)
+            .map_err(|e| format!("Failed to query list_playbooks_for_app: {}", e))?;
+        let mut out = collect_rows(rows, "kg_playbooks")?;
+        for (pb, _, _) in &mut out {
+            pb.steps = load_playbook_steps(&conn, &pb.id)?;
+        }
+        Ok(out)
+    }
+
+    pub fn list_playbooks_for_app(
+        &self,
+        app_exe: &str,
+    ) -> Result<Vec<CompiledPlaybookDto>, String> {
+        let items = self.list_playbooks_with_meta_for_app(app_exe)?;
+        Ok(items.into_iter().map(|(pb, _, _)| pb).collect())
+    }
+
+    pub fn list_all_playbooks(
+        &self,
+        app_filter: Option<&str>,
+    ) -> Result<Vec<CompiledPlaybookDto>, String> {
+        let trimmed = app_filter.map(str::trim).filter(|s| !s.is_empty());
+        if let Some(app) = trimmed {
+            return self.list_playbooks_for_app(app);
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, app_exe, view_key, canonical_goal, display_label,
+                        aliases_json, confidence_tier, confidence_score,
+                        success_count, failure_count, tier0_hits, tokens_saved_est, updated_at
+                 FROM kg_playbooks
+                 ORDER BY
+                    CASE confidence_tier WHEN 'verified' THEN 0 WHEN 'inferred' THEN 1 ELSE 2 END,
+                    success_count DESC,
+                    updated_at DESC
+                 LIMIT 250",
+            )
+            .map_err(|e| format!("Failed to prepare list_all_playbooks: {}", e))?;
+
+        let rows = stmt
+            .query_map([], decode_playbook_meta)
+            .map_err(|e| format!("Failed to query list_all_playbooks: {}", e))?;
+        let items = collect_rows(rows, "kg_playbooks")?;
+        let mut out = Vec::with_capacity(items.len());
+        for (mut pb, _, _) in items {
+            pb.steps = load_playbook_steps(&conn, &pb.id)?;
+            out.push(pb);
+        }
+        Ok(out)
+    }
+
+    pub fn get_playbook_by_id(&self, id: &str) -> Result<Option<CompiledPlaybookDto>, String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        let item = conn
+            .query_row(
+                "SELECT id, app_exe, view_key, canonical_goal, display_label,
+                        aliases_json, confidence_tier, confidence_score,
+                        success_count, failure_count, tier0_hits, tokens_saved_est, updated_at
+                 FROM kg_playbooks
+                 WHERE id = ?1",
+                params![id],
+                decode_playbook_meta,
+            )
+            .optional()
+            .map_err(|e| format!("Failed to query get_playbook_by_id: {}", e))?;
+        match item {
+            Some((mut pb, _, _)) => {
+                pb.steps = load_playbook_steps(&conn, &pb.id)?;
+                Ok(Some(pb))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn record_playbook_hit(&self, id: &str, tokens_saved: i64) -> Result<(), String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        let now = unix_now();
+        conn.execute(
+            "UPDATE kg_playbooks
+             SET tier0_hits = tier0_hits + 1,
+                 tokens_saved_est = tokens_saved_est + ?2,
+                 updated_at = ?3
+             WHERE id = ?1",
+            params![id, tokens_saved.max(0), now],
+        )
+        .map_err(|e| format!("Failed to record_playbook_hit: {}", e))?;
+        Ok(())
+    }
+
+    pub fn record_playbook_feedback(
+        &self,
+        id: &str,
+        worked: bool,
+    ) -> Result<Option<CompiledPlaybookDto>, String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        let current = conn
+            .query_row(
+                "SELECT id, app_exe, view_key, canonical_goal, display_label,
+                        aliases_json, confidence_tier, confidence_score,
+                        success_count, failure_count, tier0_hits, tokens_saved_est, updated_at
+                 FROM kg_playbooks
+                 WHERE id = ?1",
+                params![id],
+                decode_playbook_meta,
+            )
+            .optional()
+            .map_err(|e| format!("Failed to load playbook for feedback: {}", e))?;
+
+        let Some((mut pb, _, _)) = current else {
+            return Ok(None);
+        };
+
+        let now = unix_now();
+        if worked {
+            pb.success_count += 1;
+            pb.confidence_score = (pb.confidence_score + 0.15).clamp(0.80, 1.0);
+            pb.confidence_tier = "verified".to_string();
+        } else {
+            pb.failure_count += 1;
+            pb.confidence_score = (pb.confidence_score - 0.25).clamp(0.0, 1.0);
+            if (pb.failure_count >= 2 && pb.failure_count >= pb.success_count)
+                || pb.confidence_score < 0.45
+            {
+                pb.confidence_tier = "stale".to_string();
+            } else if pb.confidence_score < 0.65 && pb.confidence_tier == "verified" {
+                pb.confidence_tier = "inferred".to_string();
+            }
+        }
+        pb.updated_at = now;
+
+        conn.execute(
+            "UPDATE kg_playbooks
+             SET confidence_tier = ?2,
+                 confidence_score = ?3,
+                 success_count = ?4,
+                 failure_count = ?5,
+                 updated_at = ?6
+             WHERE id = ?1",
+            params![
+                pb.id,
+                pb.confidence_tier,
+                pb.confidence_score,
+                pb.success_count,
+                pb.failure_count,
+                pb.updated_at
+            ],
+        )
+        .map_err(|e| format!("Failed to update playbook feedback: {}", e))?;
+
+        pb.steps = load_playbook_steps(&conn, &pb.id)?;
+        Ok(Some(pb))
+    }
+
+    pub fn delete_playbook(&self, id: &str) -> Result<(), String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        conn.execute("DELETE FROM kg_playbooks WHERE id = ?1", params![id])
+            .map_err(|e| format!("Failed to delete playbook: {}", e))?;
+        Ok(())
+    }
+
+    pub fn get_learning_stats(&self) -> Result<LearningStatsDto, String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN confidence_tier = 'verified' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN confidence_tier = 'stale' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(tier0_hits), 0),
+                COALESCE(SUM(tokens_saved_est), 0)
+             FROM kg_playbooks",
+            [],
+            |row| {
+                let total: i64 = row.get(0)?;
+                let verified: i64 = row.get(1)?;
+                let stale: i64 = row.get(2)?;
+                let hits: i64 = row.get(3)?;
+                let saved: i64 = row.get(4)?;
+                Ok(LearningStatsDto {
+                    total_playbooks: total.max(0) as usize,
+                    verified_playbooks: verified.max(0) as usize,
+                    stale_playbooks: stale.max(0) as usize,
+                    total_tier0_hits: hits.max(0),
+                    total_tokens_saved: saved.max(0),
+                })
+            },
+        )
+        .map_err(|e| format!("Failed to query learning stats: {}", e))
+    }
+
+    pub fn update_edge_feedback(
+        &self,
+        app_exe: &str,
+        goal_or_intent: &str,
+        worked: bool,
+    ) -> Result<usize, String> {
+        let app_trimmed = app_exe.trim();
+        let intent_trimmed = goal_or_intent.trim().to_ascii_lowercase();
+        if app_trimmed.is_empty() || intent_trimmed.is_empty() {
+            return Ok(0);
+        }
+        let alt = app_exe_alt_variant(app_trimmed);
+        let now = unix_now();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT e.id, e.intent, e.relation, e.success_count, e.failure_count
+                 FROM kg_edges e
+                 LEFT JOIN kg_nodes nf ON nf.id = e.from_node
+                 LEFT JOIN kg_nodes nt ON nt.id = e.to_node
+                 WHERE LOWER(nf.app_exe) = LOWER(?1) OR LOWER(nf.app_exe) = LOWER(?2)
+                    OR LOWER(nt.app_exe) = LOWER(?1) OR LOWER(nt.app_exe) = LOWER(?2)",
+            )
+            .map_err(|e| format!("Failed to prepare update_edge_feedback: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![app_trimmed, alt], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+            .map_err(|e| format!("Failed to query edges for feedback: {}", e))?;
+        let candidates = collect_rows(rows, "kg_edges_feedback")?;
+        drop(stmt);
+
+        let mut updated = 0usize;
+        for (id, intent, relation, success_count, failure_count) in candidates {
+            let intent_l = intent.to_ascii_lowercase();
+            let matches = intent_l.contains(&intent_trimmed) || intent_trimmed.contains(&intent_l);
+            if !matches {
+                continue;
+            }
+            if worked {
+                let next_rel = if relation == "inferred_step" || relation == "observed_step" {
+                    "verified_step"
+                } else {
+                    relation.as_str()
+                };
+                conn.execute(
+                    "UPDATE kg_edges
+                     SET success_count = ?2,
+                         confidence_tier = 'verified',
+                         relation = ?3,
+                         updated_at = ?4
+                     WHERE id = ?1",
+                    params![id, success_count + 1, next_rel, now],
+                )
+                .map_err(|e| format!("Failed to promote edge feedback: {}", e))?;
+            } else {
+                let next_fail = failure_count + 1;
+                let next_tier = if next_fail > success_count {
+                    "stale"
+                } else {
+                    "inferred"
+                };
+                conn.execute(
+                    "UPDATE kg_edges
+                     SET failure_count = ?2,
+                         confidence_tier = ?3,
+                         updated_at = ?4
+                     WHERE id = ?1",
+                    params![id, next_fail, next_tier, now],
+                )
+                .map_err(|e| format!("Failed to demote edge feedback: {}", e))?;
+            }
+            updated += 1;
+        }
+        Ok(updated)
+    }
+
+    pub fn list_dead_end_edge_ids(&self, app_exe: &str) -> Result<HashSet<String>, String> {
+        let trimmed = app_exe.trim();
+        if trimmed.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let alt = app_exe_alt_variant(trimmed);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DB mutex poisoned".to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT e.id
+                 FROM kg_edges e
+                 LEFT JOIN kg_nodes nf ON nf.id = e.from_node
+                 LEFT JOIN kg_nodes nt ON nt.id = e.to_node
+                 WHERE (LOWER(nf.app_exe) = LOWER(?1) OR LOWER(nf.app_exe) = LOWER(?2)
+                    OR LOWER(nt.app_exe) = LOWER(?1) OR LOWER(nt.app_exe) = LOWER(?2))
+                   AND (e.failure_count > e.success_count OR e.confidence_tier = 'stale')",
+            )
+            .map_err(|e| format!("Failed to prepare list_dead_end_edge_ids: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![trimmed, alt], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Failed to query list_dead_end_edge_ids: {}", e))?;
+        let ids = collect_rows(rows, "dead_end_edges")?;
+        Ok(ids.into_iter().collect())
+    }
+}
+
+fn app_exe_alt_variant(app_exe: &str) -> String {
+    let lower = app_exe.to_ascii_lowercase();
+    if lower.ends_with(".exe") && app_exe.len() > 4 {
+        app_exe[..app_exe.len() - 4].to_string()
+    } else {
+        format!("{}.exe", app_exe)
+    }
+}
+
+fn ensure_column_exists(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    alter_sql: &str,
+) -> Result<(), String> {
+    let pragma_sql = format!("PRAGMA table_info({})", table);
+    let mut stmt = conn
+        .prepare(&pragma_sql)
+        .map_err(|e| format!("Failed to inspect {}: {}", table, e))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("Failed to query pragma table_info({}): {}", table, e))?;
+    let cols = collect_rows(rows, table)?;
+    drop(stmt);
+
+    if !cols.iter().any(|c| c.eq_ignore_ascii_case(column)) {
+        conn.execute(alter_sql, [])
+            .map_err(|e| format!("Failed to migrate {}.{}: {}", table, column, e))?;
+    }
+    Ok(())
+}
+
+fn decode_playbook_meta(
+    row: &Row<'_>,
+) -> rusqlite::Result<(CompiledPlaybookDto, Vec<String>, i64)> {
+    let aliases_json: String = row.get(5)?;
+    let aliases = serde_json::from_str::<Vec<String>>(&aliases_json).unwrap_or_default();
+    let tier0_hits: i64 = row.get(10)?;
+    Ok((
+        CompiledPlaybookDto {
+            id: row.get(0)?,
+            app_exe: row.get(1)?,
+            view_key: row.get(2)?,
+            canonical_goal: row.get(3)?,
+            display_label: row.get(4)?,
+            confidence_tier: row.get(6)?,
+            confidence_score: row.get(7)?,
+            success_count: row.get(8)?,
+            failure_count: row.get(9)?,
+            tokens_saved_est: row.get(11)?,
+            steps: Vec::new(),
+            updated_at: row.get(12)?,
+        },
+        aliases,
+        tier0_hits,
+    ))
+}
+
+fn load_playbook_steps(conn: &Connection, playbook_id: &str) -> Result<Vec<PlaybookStepDto>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT step_number, instruction_line, target_name, control_type,
+                    shortcut, terminal_command, action_kind, spoken_text, norm_bbox_json
+             FROM kg_playbook_steps
+             WHERE playbook_id = ?1
+             ORDER BY step_number ASC",
+        )
+        .map_err(|e| format!("Failed to prepare load_playbook_steps: {}", e))?;
+    let rows = stmt
+        .query_map(params![playbook_id], |row| {
+            let norm_bbox_json: Option<String> = row.get(8)?;
+            let norm_bbox = norm_bbox_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<[f64; 4]>(s).ok());
+            Ok(PlaybookStepDto {
+                step_number: row.get(0)?,
+                instruction_line: row.get(1)?,
+                target_name: row.get(2)?,
+                control_type: row.get(3)?,
+                shortcut: row.get(4)?,
+                terminal_command: row.get(5)?,
+                action_kind: row.get(6)?,
+                spoken_text: row.get(7)?,
+                norm_bbox,
+            })
+        })
+        .map_err(|e| format!("Failed to query load_playbook_steps: {}", e))?;
+    collect_rows(rows, "kg_playbook_steps")
 }
 
 fn collect_rows<T, I>(rows: I, label: &str) -> Result<Vec<T>, String>
@@ -1511,7 +2152,7 @@ mod tests {
             .unwrap()
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .expect("user_version");
-        assert_eq!(version, 2);
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
 
         let history = db.history_list(10).expect("history preserved");
         assert_eq!(history.len(), 1);
@@ -1741,5 +2382,154 @@ mod tests {
             detail.day_diary_md.as_deref(),
             Some("# Day Diary\nWorked on GuideLens.")
         );
+    }
+
+    #[test]
+    fn test_v2_to_v3_migration_and_playbook_crud() {
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("v2_guidelens.db");
+
+        {
+            let raw = Connection::open(&db_path).expect("create raw v2 db");
+            raw.execute_batch(
+                r#"
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    active_app TEXT NOT NULL,
+                    user_query TEXT NOT NULL,
+                    brain_used TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE TABLE steps (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    step_number INTEGER NOT NULL,
+                    instruction_line TEXT NOT NULL,
+                    bbox_json TEXT,
+                    terminal_command TEXT,
+                    screenshot_path TEXT,
+                    completed INTEGER DEFAULT 0
+                );
+                CREATE TABLE app_preferences (
+                    app_executable TEXT PRIMARY KEY,
+                    always_magnify INTEGER DEFAULT 0,
+                    preferred_brain TEXT DEFAULT 'auto'
+                );
+                CREATE TABLE kv_settings (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT NOT NULL
+                );
+                CREATE TABLE kg_nodes (
+                    id TEXT PRIMARY KEY,
+                    node_type TEXT NOT NULL,
+                    app_exe TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    metadata_json TEXT,
+                    hit_count INTEGER NOT NULL DEFAULT 1,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE kg_edges (
+                    id TEXT PRIMARY KEY,
+                    from_node TEXT NOT NULL,
+                    to_node TEXT NOT NULL,
+                    relation TEXT NOT NULL,
+                    intent TEXT NOT NULL,
+                    control_name TEXT,
+                    control_type TEXT,
+                    shortcut TEXT,
+                    norm_bbox_json TEXT,
+                    success_count INTEGER NOT NULL DEFAULT 1,
+                    updated_at INTEGER NOT NULL
+                );
+                INSERT INTO kg_nodes VALUES ('app:code', 'app', 'Code.exe', 'VS Code', NULL, 1, 100);
+                INSERT INTO kg_nodes VALUES ('ctrl:term', 'control', 'Code.exe', 'New Terminal', NULL, 1, 100);
+                INSERT INTO kg_edges VALUES (
+                    'edge:term', 'app:code', 'ctrl:term', 'observed_step',
+                    'open integrated terminal', 'New Terminal', 'MenuItem', 'Ctrl+Shift+`',
+                    NULL, 1, 100
+                );
+                "#,
+            )
+            .expect("seed v2 schema");
+            raw.pragma_update(None, "user_version", 2).expect("set v2");
+        }
+
+        let db = DbState::open(&db_path).expect("migrate v2 -> v3");
+        assert!(db_path.with_extension("db.bak.v2").exists());
+
+        // Verify kg_edges has new columns and edge feedback works
+        let updated = db
+            .update_edge_feedback("Code.exe", "open integrated terminal", true)
+            .expect("promote edge");
+        assert_eq!(updated, 1);
+        assert!(db.list_dead_end_edge_ids("Code.exe").unwrap().is_empty());
+
+        // Failing repeatedly turns edge into dead-end
+        db.update_edge_feedback("Code.exe", "open integrated terminal", false)
+            .unwrap();
+        db.update_edge_feedback("Code.exe", "open integrated terminal", false)
+            .unwrap();
+        db.update_edge_feedback("Code.exe", "open integrated terminal", false)
+            .unwrap();
+        assert!(db
+            .list_dead_end_edge_ids("Code.exe")
+            .unwrap()
+            .contains("edge:term"));
+
+        // Playbook CRUD + hit + feedback + stats + delete
+        let pb = CompiledPlaybookDto {
+            id: "pb:code:term".to_string(),
+            app_exe: "Code.exe".to_string(),
+            view_key: "code.exe:workspace".to_string(),
+            canonical_goal: "Open integrated terminal".to_string(),
+            display_label: "Open integrated terminal".to_string(),
+            confidence_tier: "inferred".to_string(),
+            confidence_score: 0.5,
+            success_count: 0,
+            failure_count: 0,
+            tokens_saved_est: 0,
+            steps: vec![PlaybookStepDto {
+                step_number: 1,
+                instruction_line: "Click Terminal -> New Terminal".to_string(),
+                target_name: Some("New Terminal".to_string()),
+                control_type: Some("MenuItem".to_string()),
+                shortcut: Some("Ctrl+Shift+`".to_string()),
+                terminal_command: None,
+                action_kind: Some("click".to_string()),
+                spoken_text: Some("Click New Terminal!".to_string()),
+                norm_bbox: Some([120.0, 30.0, 80.0, 22.0]),
+            }],
+            updated_at: 200,
+        };
+        db.upsert_compiled_playbook(&pb, &["Open integrated terminal".to_string()])
+            .expect("upsert playbook");
+
+        let promoted = db
+            .record_playbook_feedback("pb:code:term", true)
+            .expect("feedback")
+            .expect("exists");
+        assert_eq!(promoted.confidence_tier, "verified");
+        assert!(promoted.confidence_score >= 0.80);
+        assert_eq!(promoted.success_count, 1);
+
+        db.record_playbook_hit("pb:code:term", 1800)
+            .expect("record hit");
+        let stats = db.get_learning_stats().expect("stats");
+        assert_eq!(stats.total_playbooks, 1);
+        assert_eq!(stats.verified_playbooks, 1);
+        assert_eq!(stats.total_tier0_hits, 1);
+        assert_eq!(stats.total_tokens_saved, 1800);
+
+        // 2 failures demote to stale
+        db.record_playbook_feedback("pb:code:term", false).unwrap();
+        let demoted = db
+            .record_playbook_feedback("pb:code:term", false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(demoted.confidence_tier, "stale");
+        assert_eq!(db.get_learning_stats().unwrap().stale_playbooks, 1);
+
+        db.delete_playbook("pb:code:term").expect("delete playbook");
+        assert_eq!(db.list_all_playbooks(None).unwrap().len(), 0);
     }
 }

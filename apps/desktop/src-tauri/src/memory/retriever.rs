@@ -1,7 +1,8 @@
 //! Fast (`<3ms`) SQLite Knowledge Graph hint retriever for prompt injection.
 
 use crate::db::DbState;
-use crate::types::{KgEdgeDto, KgNodeDto, KnowledgeGraphDto};
+use crate::memory::compiler::{compute_vocab_idf, score_goal_match_with_aliases};
+use crate::types::{CompiledPlaybookDto, KgEdgeDto, KgNodeDto, KnowledgeGraphDto};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 const MAX_MEMORY_HINTS: usize = 5;
@@ -169,18 +170,87 @@ fn format_edge_hint(edge: &KgEdgeDto, node_map: &HashMap<&str, &KgNodeDto>) -> S
     format!("- [{}]", parts.join(" | "))
 }
 
+fn format_playbook_hint(pb: &CompiledPlaybookDto) -> String {
+    let step1 = pb.steps.first();
+    let target = step1
+        .and_then(|s| s.target_name.as_deref())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| step1.map(|s| s.instruction_line.as_str()))
+        .unwrap_or("Step 1");
+    let mut parts = vec![format!("Playbook: {} -> {}", pb.display_label.trim(), target.trim())];
+    if let Some(sc) = step1
+        .and_then(|s| s.shortcut.as_deref())
+        .filter(|s| !s.trim().is_empty())
+    {
+        parts.push(format!("Shortcut: {}", sc.trim()));
+    }
+    if let Some(cmd) = step1
+        .and_then(|s| s.terminal_command.as_deref())
+        .filter(|s| !s.trim().is_empty())
+    {
+        parts.push(format!("Cmd: {}", cmd.trim()));
+    }
+    if pb.success_count > 1 {
+        parts.push(format!("Verified {}x", pb.success_count));
+    }
+    format!("- [{}]", parts.join(" | "))
+}
+
 /// Fast (`<3ms`) SQLite Knowledge Graph lookup returning up to 5 verified
-/// `[Intent -> Control / Shortcut / Coords]` hint lines for prompt injection.
+/// `[Intent -> Control / Shortcut / Coords]` hint lines for prompt injection,
+/// suppressing dead-end edges (`failure_count > success_count`) and including verified playbooks.
 pub fn retrieve_memory_hints(
     db: &DbState,
     active_app: &str,
     window_title: &str,
     query: &str,
 ) -> String {
+    let mut lines = Vec::new();
+    let mut seen_controls: BTreeSet<String> = BTreeSet::new();
+
+    if let Ok(playbooks) = db.list_playbooks_with_meta_for_app(active_app) {
+        if !playbooks.is_empty() {
+            let vocab_idf = compute_vocab_idf(&playbooks);
+            let mut verified_pbs: Vec<(&CompiledPlaybookDto, f64)> = playbooks
+                .iter()
+                .filter(|(pb, _, _)| pb.confidence_tier == "verified" && !pb.steps.is_empty())
+                .map(|(pb, aliases, _)| {
+                    let s = if query.trim().is_empty() {
+                        pb.confidence_score
+                    } else {
+                        score_goal_match_with_aliases(query, pb, aliases, &vocab_idf)
+                    };
+                    (pb, s)
+                })
+                .filter(|(_, score)| query.trim().is_empty() || *score >= 0.35)
+                .collect();
+
+            verified_pbs.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.0.success_count.cmp(&a.0.success_count))
+            });
+
+            for (pb, _) in verified_pbs.into_iter().take(2) {
+                if let Some(s1) = pb.steps.first() {
+                    let key = format!(
+                        "{}::{}::{}",
+                        s1.target_name.as_deref().unwrap_or("").to_ascii_lowercase(),
+                        s1.shortcut.as_deref().unwrap_or("").to_ascii_lowercase(),
+                        pb.canonical_goal.to_ascii_lowercase()
+                    );
+                    seen_controls.insert(key);
+                }
+                lines.push(format_playbook_hint(pb));
+            }
+        }
+    }
+
     let Some(kg) = query_app_candidates(db, active_app) else {
-        return String::new();
+        return lines.join("\n");
     };
 
+    let dead_end_ids = db.list_dead_end_edge_ids(active_app).unwrap_or_default();
     let node_map: HashMap<&str, &KgNodeDto> =
         kg.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
     let query_lower = query.trim().to_ascii_lowercase();
@@ -190,6 +260,7 @@ pub fn retrieve_memory_hints(
     let mut scored: Vec<ScoredEdge<'_>> = kg
         .edges
         .iter()
+        .filter(|edge| !dead_end_ids.contains(&edge.id))
         .map(|edge| score_edge(edge, &node_map, &query_lower, &query_tokens, &title_tokens))
         .collect();
 
@@ -202,10 +273,11 @@ pub fn retrieve_memory_hints(
     });
 
     let any_query_hit = scored.iter().any(|s| s.query_hits > 0);
-    let mut seen_controls: BTreeSet<String> = BTreeSet::new();
-    let mut lines = Vec::new();
 
     for item in scored {
+        if lines.len() >= MAX_MEMORY_HINTS {
+            break;
+        }
         if any_query_hit && item.query_hits == 0 && item.edge.success_count < 2 {
             continue;
         }
@@ -322,5 +394,82 @@ mod tests {
         let tmp = tempdir().expect("tempdir");
         let db = DbState::open(&tmp.path().join("empty.db")).expect("open db");
         assert_eq!(retrieve_memory_hints(&db, "UnknownApp.exe", "", "save"), "");
+    }
+
+    #[test]
+    fn test_retrieve_memory_hints_suppresses_dead_ends_and_includes_verified_playbooks() {
+        let tmp = tempdir().expect("tempdir");
+        let db = DbState::open(&tmp.path().join("suppress.db")).expect("open db");
+
+        db.upsert_kg_node(&KgNodeDto {
+            id: "app:code".to_string(),
+            node_type: "app".to_string(),
+            app_exe: "Code.exe".to_string(),
+            label: "VS Code".to_string(),
+            metadata_json: None,
+            hit_count: 1,
+            updated_at: 100,
+        })
+        .unwrap();
+        db.upsert_kg_node(&KgNodeDto {
+            id: "ctrl:bad".to_string(),
+            node_type: "control".to_string(),
+            app_exe: "Code.exe".to_string(),
+            label: "Broken Button".to_string(),
+            metadata_json: None,
+            hit_count: 1,
+            updated_at: 100,
+        })
+        .unwrap();
+        db.upsert_kg_edge(&KgEdgeDto {
+            id: "edge:bad".to_string(),
+            from_node: "app:code".to_string(),
+            to_node: "ctrl:bad".to_string(),
+            relation: "inferred_step".to_string(),
+            intent: "open terminal".to_string(),
+            control_name: Some("Broken Button".to_string()),
+            control_type: Some("Button".to_string()),
+            shortcut: None,
+            norm_bbox: None,
+            success_count: 1,
+            updated_at: 100,
+        })
+        .unwrap();
+        db.update_edge_feedback("Code.exe", "open terminal", false).unwrap();
+        db.update_edge_feedback("Code.exe", "open terminal", false).unwrap();
+
+        db.upsert_compiled_playbook(
+            &CompiledPlaybookDto {
+                id: "pb:code:term".to_string(),
+                app_exe: "Code.exe".to_string(),
+                view_key: "code.exe:workspace".to_string(),
+                canonical_goal: "Open integrated terminal".to_string(),
+                display_label: "Open integrated terminal".to_string(),
+                confidence_tier: "verified".to_string(),
+                confidence_score: 0.9,
+                success_count: 3,
+                failure_count: 0,
+                tokens_saved_est: 1800,
+                steps: vec![crate::types::PlaybookStepDto {
+                    step_number: 1,
+                    instruction_line: "Click New Terminal".to_string(),
+                    target_name: Some("New Terminal".to_string()),
+                    control_type: Some("MenuItem".to_string()),
+                    shortcut: Some("Ctrl+Shift+`".to_string()),
+                    terminal_command: None,
+                    action_kind: Some("click".to_string()),
+                    spoken_text: None,
+                    norm_bbox: None,
+                }],
+                updated_at: 200,
+            },
+            &["Open integrated terminal".to_string()],
+        )
+        .unwrap();
+
+        let hints = retrieve_memory_hints(&db, "Code.exe", "main.rs - VS Code", "open terminal");
+        assert!(hints.contains("Playbook: Open integrated terminal"));
+        assert!(hints.contains("Verified 3x"));
+        assert!(!hints.contains("Broken Button"));
     }
 }

@@ -80,11 +80,20 @@ const mocks = vi.hoisted(() => {
   };
 
   const createdWindows: Array<{ label: string; options: Record<string, unknown> }> = [];
+  let onMovedHandler: ((ev: { payload: { x: number; y: number } }) => void) | null = null;
+  const setSizeMock = vi.fn(async () => {});
 
   return {
     listeners,
     voiceEngine,
     createdWindows,
+    setSizeMock,
+    emitMoved(pos: { x: number; y: number }) {
+      onMovedHandler?.({ payload: pos });
+    },
+    setOnMovedHandler(fn: ((ev: { payload: { x: number; y: number } }) => void) | null) {
+      onMovedHandler = fn;
+    },
     invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
       if (cmd === "get_settings") {
         return { ...DEFAULT_SETTINGS, onboarding_complete: true };
@@ -228,9 +237,119 @@ const mocks = vi.hoisted(() => {
           source: "uia",
         };
       }
+      if (cmd === "get_default_options") {
+        return {
+          active_app: "Code.exe",
+          window_title: "GuideLens",
+          total_tokens_saved: 3600,
+          options: [
+            {
+              id: "pb-1",
+              app_exe: "Code.exe",
+              view_key: "code.exe:workspace",
+              canonical_goal: "Open Integrated Terminal",
+              display_label: "Open Terminal",
+              confidence_tier: "verified",
+              confidence_score: 0.92,
+              success_count: 3,
+              failure_count: 0,
+              tokens_saved_est: 1800,
+              steps: [
+                {
+                  step_number: 1,
+                  instruction_line: "Press Ctrl+` to toggle the Integrated Terminal.",
+                  shortcut: "Ctrl+`",
+                },
+              ],
+              updated_at: 1732500000,
+            },
+            {
+              id: "pb-2",
+              app_exe: "Code.exe",
+              view_key: "code.exe:workspace",
+              canonical_goal: "Format Document",
+              display_label: "Format Doc",
+              confidence_tier: "inferred",
+              confidence_score: 0.52,
+              success_count: 0,
+              failure_count: 0,
+              tokens_saved_est: 0,
+              steps: [],
+              updated_at: 1732500000,
+            },
+          ],
+        };
+      }
+      if (cmd === "run_playbook") {
+        return {
+          session_id: "sess-pb-1",
+          brain: "local_vlm",
+          resolution_tier: "tier0_playbook",
+          tokens_saved: 1800,
+          playbook_id: String(args?.playbookId ?? "pb-1"),
+          plan: {
+            mode: "guide",
+            total_steps: 1,
+            steps: [
+              {
+                step_number: 1,
+                instruction_line: "Click Terminal in the top menu.",
+                target_name: "Terminal",
+                confidence: 0.96,
+              },
+            ],
+          },
+          resolved_steps: [
+            {
+              step_number: 1,
+              instruction_line: "Click Terminal in the top menu.",
+              target_name: "Terminal",
+              confidence: 0.96,
+              rect_px: { x: 240, y: 8, w: 68, h: 24 },
+              source: "uia",
+            },
+          ],
+          capture_path: null,
+          monitor: { x: 0, y: 0, w: 1920, h: 1080, scale: 1 },
+        };
+      }
+      if (cmd === "report_guidance_feedback" || cmd === "set_bar_glass" || cmd === "save_bar_position" || cmd === "clamp_bar_position") {
+        return null;
+      }
       if (cmd === "ask") {
         const q = String(args?.query ?? "");
         const brainOverride = args?.brain;
+        if (q.includes("graph-tier1-test")) {
+          return {
+            session_id: "sess-tier1",
+            brain: "byo_api",
+            resolution_tier: "tier1_text_graph",
+            tokens_saved: 1400,
+            playbook_id: null,
+            plan: {
+              mode: "guide",
+              total_steps: 1,
+              steps: [
+                {
+                  step_number: 1,
+                  instruction_line: "Click Explorer icon on the Activity Bar.",
+                  confidence: 0.91,
+                },
+              ],
+            },
+            resolved_steps: [
+              {
+                step_number: 1,
+                instruction_line: "Click Explorer icon on the Activity Bar.",
+                confidence: 0.91,
+                rect_px: { x: 0, y: 48, w: 48, h: 48 },
+                source: "uia",
+              },
+            ],
+            capture_path: null,
+            monitor: { x: 0, y: 0, w: 1920, h: 1080, scale: 1 },
+          };
+        }
         if (q.includes("timeout-test") && !brainOverride) {
           throw JSON.stringify({
             code: "timeout",
@@ -348,11 +467,16 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
-    setSize: vi.fn(async () => {}),
+    setSize: mocks.setSizeMock,
     setPosition: vi.fn(async () => {}),
     startDragging: vi.fn(async () => {}),
     outerPosition: vi.fn(async () => ({ x: 100, y: 100 })),
-    onMoved: vi.fn(async () => () => {}),
+    onMoved: vi.fn(async (cb: (ev: { payload: { x: number; y: number } }) => void) => {
+      mocks.setOnMovedHandler(cb);
+      return () => {
+        mocks.setOnMovedHandler(null);
+      };
+    }),
     close: vi.fn(async () => {}),
   }),
   LogicalSize: class {
@@ -390,6 +514,8 @@ import { FloatingBar } from "../components/FloatingBar";
 describe("FloatingBar", () => {
   beforeEach(() => {
     mocks.invoke.mockClear();
+    mocks.setSizeMock.mockClear();
+    mocks.setOnMovedHandler(null);
     mocks.createdWindows.length = 0;
     mocks.voiceEngine.reset();
     for (const k of Object.keys(mocks.listeners)) {
@@ -399,23 +525,40 @@ describe("FloatingBar", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    delete (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver;
     delete window.SpeechRecognition;
     delete (window as unknown as { AudioContext?: unknown }).AudioContext;
     delete (window as unknown as { MediaRecorder?: unknown }).MediaRecorder;
   });
 
-  it("renders sleek minimalist obsidian capsule with companion badge, focuses input on bar-summoned, and opens Control Center", async () => {
+  it("renders unified sheer Acrylic glass sheet with companion badge, focuses input on bar-summoned, and opens Control Center", async () => {
     const user = userEvent.setup();
     render(<FloatingBar initialSettings={{ onboarding_complete: true, brain_mode: "local_vlm" }} />);
 
+    const sheet = screen.getByTestId("floating-glass-sheet");
+    expect(sheet.className).toContain("w-full");
+    expect(sheet.className).toContain("rounded-xl");
+    expect(sheet.className).toContain("backdrop-blur-xl");
+    expect(sheet.className).toContain("border-white/[0.20]");
+    expect(sheet.className).not.toContain("focus-within:bg-[#0D0E12]/80");
+    expect(sheet.className).not.toContain("hover:bg-[#0D0E12]/[0.74]");
+    // Smoked-obsidian translucent tint when Acrylic blur is ON (clamped >= 0.42 for >= 4.5:1 text contrast over bright windows)
+    expect(sheet.style.backgroundColor).toBe("rgba(14, 16, 22, 0.42)");
+
     const bar = screen.getByTestId("floating-bar");
     expect(bar).toHaveAttribute("data-tauri-drag-region");
-    expect(bar.className).toContain("bg-[#0D0E12]/[0.48]");
-    expect(bar.className).toContain("backdrop-blur-xl");
-    expect(bar.className).toContain("border-white/[0.10]");
-    expect(bar.className).toContain("rounded-2xl");
-    expect(bar.className).toContain("w-[620px]");
-    expect(bar.className).toContain("h-[50px]");
+    expect(bar.className).toContain("w-full");
+    expect(bar.className).toContain("h-[54px]");
+    expect(bar.className).toContain("gl-glass-text");
+
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_bar_glass",
+      expect.objectContaining({
+        opacity: 0.28,
+        blurEnabled: true,
+        highContrast: false,
+      }),
+    );
 
     // Mini companion sprite badge renders inside capsule
     const companionBadge = screen.getByTestId("capsule-companion-badge");
@@ -490,8 +633,10 @@ describe("FloatingBar", () => {
 
     const block = await screen.findByTestId("response-block");
     expect(block).toBeInTheDocument();
-    expect(block.className).toContain("bg-[#0D0E12]/[0.58]");
-    expect(block.className).toContain("backdrop-blur-xl");
+    expect(block.className).toContain("border-t");
+    expect(block.className).toContain("border-white/[0.14]");
+    expect(block.className).toContain("bg-transparent");
+    expect(block.className).toContain("gl-glass-text");
 
     // AI text must render as plain text only, never executed as HTML
     const instr = screen.getByTestId("instruction-line");
@@ -1145,5 +1290,109 @@ describe("FloatingBar", () => {
       });
     });
     expect(agentBtn).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("renders 1-click Default Options pills, runs Tier-0 playbook, supports Re-ask AI & Worked feedback, and shows Tier-1 Graph badge", async () => {
+    const user = userEvent.setup();
+    render(<FloatingBar initialSettings={{ onboarding_complete: true }} />);
+
+    // Default Options strip renders learned playbooks with 0 tok badge for verified
+    const strip = await screen.findByTestId("default-options-strip");
+    expect(strip).toHaveTextContent("Default Options");
+    const pill1 = screen.getByTestId("default-option-pill-pb-1");
+    expect(pill1).toHaveTextContent("⚡ Open Terminal");
+    expect(pill1).toHaveTextContent("0 tok");
+    expect(screen.getByTestId("default-option-pill-pb-2")).toHaveTextContent("⚡ Format Doc");
+
+    // Clicking pill runs run_playbook immediately and displays Tier-0 badge + Re-ask AI
+    await user.click(pill1);
+    expect(mocks.invoke).toHaveBeenCalledWith("run_playbook", {
+      playbookId: "pb-1",
+      playbook_id: "pb-1",
+      forceAi: false,
+      force_ai: false,
+    });
+    expect(await screen.findByTestId("resolution-tier-badge")).toHaveTextContent(
+      "Learned · 0 tokens",
+    );
+    expect(screen.getByTestId("instruction-line")).toHaveTextContent(
+      "Click Terminal in the top menu.",
+    );
+
+    // Worked feedback calls report_guidance_feedback and refreshes default options
+    await user.click(screen.getByTestId("feedback-worked-btn"));
+    expect(mocks.invoke).toHaveBeenCalledWith("report_guidance_feedback", {
+      sessionId: "sess-pb-1",
+      session_id: "sess-pb-1",
+      playbookId: "pb-1",
+      playbook_id: "pb-1",
+      worked: true,
+    });
+
+    // Re-ask AI invokes ask with forceAi: true
+    await user.click(screen.getByTestId("reask-ai-btn"));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "ask",
+      expect.objectContaining({
+        query: "Open Integrated Terminal",
+        forceAi: true,
+        force_ai: true,
+      }),
+    );
+
+    // Tier-1 Graph badge
+    const input = screen.getByTestId("bar-query-input");
+    await user.clear(input);
+    await user.type(input, "graph-tier1-test{enter}");
+    expect(await screen.findByTestId("resolution-tier-badge")).toHaveTextContent(
+      "Graph · ~1.4k tokens saved",
+    );
+  });
+
+  it("saves bar position via save_bar_position without triggering set_settings and auto-resizes via ResizeObserver", async () => {
+    vi.useFakeTimers();
+
+    let resizeCb: ResizeObserverCallback | null = null;
+    class MockResizeObserver {
+      constructor(cb: ResizeObserverCallback) {
+        resizeCb = cb;
+      }
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    }
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver;
+
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb: FrameRequestCallback) => {
+        cb(0);
+        return 1;
+      });
+
+    render(<FloatingBar initialSettings={{ onboarding_complete: true }} />);
+
+    const root = screen.getByTestId("floating-bar-root");
+    Object.defineProperty(root, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: 640, height: 164, top: 0, left: 0, right: 640, bottom: 164 }),
+    });
+
+    await act(async () => {
+      resizeCb?.([] as unknown as ResizeObserverEntry[], {} as ResizeObserver);
+    });
+    expect(mocks.setSizeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 640, height: 164 }),
+    );
+
+    mocks.invoke.mockClear();
+    await act(async () => {
+      mocks.emitMoved({ x: 320, y: 120 });
+      await vi.advanceTimersByTimeAsync(350);
+    });
+
+    expect(mocks.invoke).toHaveBeenCalledWith("save_bar_position", { x: 320, y: 120 });
+    expect(mocks.invoke).not.toHaveBeenCalledWith("set_settings", expect.anything());
+    rafSpy.mockRestore();
   });
 });

@@ -43,19 +43,19 @@
       <div class="container hero__grid">
         <div class="hero__copy">
           <h1>See the step right on screen</h1>
-          <p class="hero__lede">GuideLens highlights exact Windows controls with live UI automation.</p>
+          <p class="hero__lede">GuideLens highlights exact Windows controls with live UI automation, DWM Acrylic glass, and zero-token playbooks.</p>
           <div class="hero__actions">
-            <a class="btn btn--primary" href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/GuideLens-v2.2.0-windows-x64.exe">Download for Windows</a>
+            <a class="btn btn--primary" href="https://github.com/joking-really/GuideLens/releases/download/v2.3.0/GuideLens-v2.3.0-windows-x64.exe">Download for Windows</a>
             <a class="btn btn--day-quiet" href="https://github.com/joking-really/GuideLens" target="_blank" rel="noopener noreferrer">View on GitHub</a>
           </div>
         </div>
 
         <figure class="hero__stage glass">
           <div class="hero__shot hero__shot--bar">
-            <img src="./assets/screenshot-floating-bar.png" width="1280" height="240" alt="GuideLens floating command bar over an active Windows workspace" decoding="async">
+            <img src="./assets/screenshot-floating-bar.png" width="2560" height="480" alt="GuideLens v2.3 Windows Acrylic floating command bar with 1-click Default Options" decoding="async">
           </div>
           <div class="hero__shot hero__shot--overlay">
-            <img src="./assets/screenshot-overlay-pointing.png" width="1280" height="420" alt="Click-through overlay pointing Mochi and step badge onto Run Workflow" decoding="async">
+            <img src="./assets/screenshot-overlay-pointing.png" width="2080" height="740" alt="Click-through overlay pointing Mochi, 2.5x magnifier, and step badge onto Export PDF" decoding="async">
             <span class="hero__reticle" aria-hidden="true">
               <i class="reticle__c reticle__c--tl"></i>
               <i class="reticle__c reticle__c--tr"></i>
@@ -81,47 +81,47 @@
                   <span class="sim-step__dot" aria-hidden="true"></span>
                   <span class="sim-step__name">Summon</span>
                 </button>
-                <p class="sim-step__desc">Open the bar with Ctrl + Space.</p>
+                <p class="sim-step__desc">Acrylic bar + 1-click Default Options.</p>
               </div>
               <div class="sim-step-row">
                 <button class="sim-step" type="button" role="tab" id="sim-tab-1" aria-selected="false" aria-controls="sim-viewport" tabindex="-1" data-sim-step="1">
                   <span class="sim-step__dot" aria-hidden="true"></span>
                   <span class="sim-step__name">Point and advance</span>
                 </button>
-                <p class="sim-step__desc">Click the target box to advance.</p>
+                <p class="sim-step__desc">Click the locked Export PDF button.</p>
               </div>
               <div class="sim-step-row">
                 <button class="sim-step" type="button" role="tab" id="sim-tab-2" aria-selected="false" aria-controls="sim-viewport" tabindex="-1" data-sim-step="2">
                   <span class="sim-step__dot" aria-hidden="true"></span>
-                  <span class="sim-step__name">Remember</span>
+                  <span class="sim-step__name">Compile</span>
                 </button>
-                <p class="sim-step__desc">Save resolved paths in SQLite graph.</p>
+                <p class="sim-step__desc">Replay verified paths at 0 LLM tokens.</p>
               </div>
             </div>
 
             <p class="sim-status" id="sim-status" role="status" aria-live="polite" data-state="searching">
               <span class="sim-status__pip" aria-hidden="true"></span>
-              <span class="sim-status__text">Command bar ready on Ctrl + Space</span>
+              <span class="sim-status__text">Acrylic bar &amp; 1-click Default Options ready</span>
             </p>
           </div>
 
           <div class="sim-viewport glass" id="sim-viewport" role="tabpanel" aria-labelledby="sim-tab-0" data-phase="0">
             <div class="sim-media">
               <figure class="sim-frame sim-frame--bar">
-                <img src="./assets/screenshot-floating-bar.png" width="1280" height="240" alt="Translucent GuideLens command bar floating over workspace text" decoding="async">
+                <img src="./assets/screenshot-floating-bar.png" width="2560" height="480" alt="Translucent Windows DWM Acrylic command bar with 1-click Default Options" decoding="async">
               </figure>
               <figure class="sim-frame sim-frame--overlay">
-                <img src="./assets/screenshot-overlay-pointing.png" width="1280" height="420" alt="GuideLens pointing overlay highlighting the Run Workflow button" decoding="async">
+                <img src="./assets/screenshot-overlay-pointing.png" width="2080" height="740" alt="GuideLens pointing overlay highlighting the Export PDF button" decoding="async">
               </figure>
 
               <div class="sim-reticle sim-reticle--0" aria-hidden="true">
-                <span class="sim-reticle__tag">Ctrl + Space</span>
+                <span class="sim-reticle__tag">Ctrl + Space · 0 tok</span>
               </div>
               <div class="sim-reticle sim-reticle--1" aria-hidden="true">
                 <span class="sim-reticle__tag">UIA rect locked</span>
               </div>
               <div class="sim-reticle sim-reticle--2" aria-hidden="true">
-                <span class="sim-reticle__tag">Graph saved</span>
+                <span class="sim-reticle__tag">Playbook compiled · 0 tok</span>
               </div>
 
               <button class="sim-hitbox" type="button" id="sim-hitbox" aria-label="Click highlighted target inside simulator to advance step">
@@ -155,15 +155,15 @@
         </div>
 
         <div class="well grounding__well">
-          <div class="wipe" id="grounding-wipe" style="--wipe: 72%;">
+          <div class="wipe" id="grounding-wipe" style="--wipe: 82%;">
             <div class="wipe__layer wipe__layer--before">
-              <img src="./assets/screenshot-overlay-pointing.png" width="1280" height="420" alt="" decoding="async">
+              <img src="./assets/screenshot-overlay-pointing.png" width="2080" height="740" alt="" decoding="async">
               <div class="wipe__box wipe__box--drift" aria-hidden="true">
                 <span>Vision 0 to 1000</span>
               </div>
             </div>
             <div class="wipe__layer wipe__layer--after">
-              <img src="./assets/screenshot-overlay-pointing.png" width="1280" height="420" alt="Comparison between drifting vision box and exact UI Automation lock on Run Workflow" decoding="async">
+              <img src="./assets/screenshot-overlay-pointing.png" width="2080" height="740" alt="Comparison between drifting vision box and exact UI Automation lock on Export PDF" decoding="async">
               <div class="wipe__box wipe__box--snap" aria-hidden="true">
                 <span>UIA rect locked</span>
               </div>
@@ -171,10 +171,34 @@
             <div class="wipe__divider" aria-hidden="true">
               <span class="wipe__knob"></span>
             </div>
-            <input class="wipe__range" id="wipe-range" type="range" min="12" max="88" value="72" aria-label="Compare vision drift against UI Automation snap">
+            <input class="wipe__range" id="wipe-range" type="range" min="12" max="88" value="82" aria-label="Compare vision drift against UI Automation snap">
           </div>
           <p class="well__caption">Drag across the frame to compare coordinate grounding.</p>
         </div>
+      </div>
+
+      <div class="container playbooks-band" data-sc-in>
+        <div class="playbooks-band__copy">
+          <h3>Zero-token Compiled Playbooks</h3>
+          <p class="lead">Verified paths compile into Tier-0 UIA playbooks and launch in one click from the Acrylic bar.</p>
+          <dl class="grounding__facts">
+            <div class="grounding__row">
+              <dt class="grounding__term grounding__term--snap">Tier-0 Playbooks</dt>
+              <dd>Verified SQLite paths replay with 0 LLM tokens and instant Re-ask AI fallback.</dd>
+            </div>
+            <div class="grounding__row">
+              <dt class="grounding__term grounding__term--snap">1-Click Options</dt>
+              <dd>Surface top app actions as <code>0 tok</code> pills inside the command bar.</dd>
+            </div>
+            <div class="grounding__row">
+              <dt class="grounding__term grounding__term--snap">Windows Acrylic</dt>
+              <dd>Native DWM frosted glass with adjustable 12–65% smoked tint opacity.</dd>
+            </div>
+          </dl>
+        </div>
+        <figure class="playbooks-band__media glass">
+          <img src="./assets/screenshot-hub-playbooks.png" width="2560" height="1600" alt="GuideLens Knowledge Graph showing Compiled Playbooks, Verified 0-Token status, and 24,800 Tokens Saved" decoding="async">
+        </figure>
       </div>
     </section>
 
@@ -221,7 +245,7 @@
           <div class="companions__stage">
             <div class="comp-detail glass" id="comp-detail" role="tabpanel" aria-labelledby="comp-tab-mochi">
               <figure class="comp-detail__hub">
-                <img src="./assets/screenshot-hub-companions.png" width="1280" height="820" alt="GuideLens Companion and Voice settings showing Mochi, Byte, Sora, and Flow" decoding="async">
+                <img src="./assets/screenshot-hub-companions.png" width="2560" height="1600" alt="GuideLens Companion and Voice settings showing Mochi, Byte, Sora, and Flow" decoding="async">
               </figure>
               <div class="comp-detail__bar">
                 <div class="comp-detail__text">
@@ -258,7 +282,7 @@
             </dl>
           </div>
           <figure class="shortcuts-band__media glass">
-            <img src="./assets/screenshot-hub-shortcuts.png" width="1280" height="820" alt="GuideLens Settings screen listing global keyboard shortcuts and retention" decoding="async">
+            <img src="./assets/screenshot-hub-shortcuts.png" width="2560" height="1600" alt="GuideLens Settings screen showing Windows Acrylic Frosted Glass, Privacy Shield, and global shortcuts" decoding="async">
           </figure>
         </div>
       </div>
@@ -345,13 +369,13 @@
           <p class="lead">Run the standalone installer or clone the repository.</p>
 
           <div class="download__cta-row">
-            <a class="btn btn--primary" href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/GuideLens-v2.2.0-windows-x64.exe">Download for Windows</a>
+            <a class="btn btn--primary" href="https://github.com/joking-really/GuideLens/releases/download/v2.3.0/GuideLens-v2.3.0-windows-x64.exe">Download for Windows</a>
           </div>
 
           <ul class="download__artifacts">
-            <li><span class="num">57.4 MB</span> installer</li>
-            <li><a href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/GuideLens-v2.2.0-windows-x64.zip">Portable ZIP (<span class="num">22.9 MB</span>)</a></li>
-            <li><a href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/SHA256SUMS.txt">SHA-256</a></li>
+            <li><span class="num">55.2 MB</span> installer</li>
+            <li><a href="https://github.com/joking-really/GuideLens/releases/download/v2.3.0/GuideLens-v2.3.0-windows-x64.zip">Portable ZIP (<span class="num">22.0 MB</span>)</a></li>
+            <li><a href="https://github.com/joking-really/GuideLens/releases/download/v2.3.0/SHA256SUMS.txt">SHA-256</a></li>
           </ul>
 
           <p class="download__note">Unsigned release: choose More info then Run anyway in SmartScreen.</p>
@@ -381,7 +405,7 @@
       <p class="site-footer__mast">GuideLens</p>
       <div class="site-footer__meta">
         <nav class="site-footer__links" aria-label="Footer">
-          <a href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/GuideLens-v2.2.0-windows-x64.exe">Download</a>
+          <a href="https://github.com/joking-really/GuideLens/releases/download/v2.3.0/GuideLens-v2.3.0-windows-x64.exe">Download</a>
           <a href="https://github.com/joking-really/GuideLens/releases/latest" target="_blank" rel="noopener noreferrer">Releases</a>
           <a href="https://github.com/joking-really/GuideLens" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a href="https://github.com/joking-really/GuideLens/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>

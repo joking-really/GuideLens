@@ -157,6 +157,29 @@ const mocks = vi.hoisted(() => {
     master_md_path: "C:\\Users\\test\\AppData\\Local\\GuideLens\\memory\\knowledge-graph.md",
   };
 
+  let playbooksState = [
+    {
+      id: "pb-10",
+      app_exe: "Code.exe",
+      view_key: "code.exe:workspace",
+      canonical_goal: "Open Integrated Terminal",
+      display_label: "Open Terminal",
+      confidence_tier: "verified",
+      confidence_score: 0.94,
+      success_count: 4,
+      failure_count: 0,
+      tokens_saved_est: 1800,
+      steps: [
+        {
+          step_number: 1,
+          instruction_line: "Press Ctrl+` to open Integrated Terminal.",
+          shortcut: "Ctrl+`",
+        },
+      ],
+      updated_at: 1732440000,
+    },
+  ];
+
   return {
     listeners,
     copilotEngine,
@@ -302,6 +325,47 @@ const mocks = vi.hoisted(() => {
           };
         case "preview_companion":
           return null;
+        case "list_compiled_playbooks":
+          return playbooksState;
+        case "get_learning_stats":
+          return {
+            total_playbooks: playbooksState.length,
+            verified_playbooks: playbooksState.filter((p) => p.confidence_tier === "verified").length,
+            stale_playbooks: 0,
+            total_tier0_hits: 4,
+            total_tokens_saved: 7200,
+          };
+        case "run_playbook":
+          return {
+            session_id: "sess-pb-10",
+            brain: "local_vlm",
+            resolution_tier: "tier0_playbook",
+            tokens_saved: 1800,
+            playbook_id: String(args?.playbookId ?? "pb-10"),
+            plan: {
+              mode: "guide",
+              total_steps: 1,
+              steps: [{ step_number: 1, instruction_line: "Press Ctrl+`", confidence: 0.95 }],
+            },
+            resolved_steps: [
+              {
+                step_number: 1,
+                instruction_line: "Press Ctrl+`",
+                confidence: 0.95,
+                rect_px: null,
+                source: "none",
+              },
+            ],
+            capture_path: null,
+            monitor: null,
+          };
+        case "delete_playbook": {
+          const targetId = String(args?.playbookId ?? "");
+          playbooksState = playbooksState.filter((p) => p.id !== targetId);
+          return null;
+        }
+        case "set_bar_glass":
+          return null;
         default:
           return null;
       }
@@ -430,10 +494,29 @@ describe("AdminHub Control Center", () => {
       day_key: "2026-11-24",
     });
 
-    // 2. Knowledge Graph tab: SVG nodes, inspector, deleteMemoryNode, .graph.md viewer
+    // 2. Knowledge Graph tab: Compiled Playbooks & Token Savings + SVG nodes, inspector, deleteMemoryNode, .graph.md viewer
     await user.click(screen.getByTestId("tab-graph"));
     const nodeCtrl = await screen.findByTestId("kg-node-n-ctrl");
     expect(screen.getByTestId("graph-markdown-viewer")).toHaveTextContent("Code --> RunDebug");
+
+    expect(screen.getByTestId("learning-stats-kpi")).toHaveTextContent("7,200");
+    expect(screen.getByTestId("playbook-row-pb-10")).toHaveTextContent("Open Terminal");
+    expect(screen.getByTestId("playbook-row-pb-10")).toHaveTextContent("verified");
+    await user.click(screen.getByTestId("playbook-run-pb-10"));
+    expect(mocks.invoke).toHaveBeenCalledWith("run_playbook", {
+      playbookId: "pb-10",
+      playbook_id: "pb-10",
+      forceAi: false,
+      force_ai: false,
+    });
+    await user.click(screen.getByTestId("playbook-delete-pb-10"));
+    expect(mocks.invoke).toHaveBeenCalledWith("delete_playbook", {
+      playbookId: "pb-10",
+      playbook_id: "pb-10",
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("playbook-row-pb-10")).not.toBeInTheDocument();
+    });
 
     await act(async () => {
       fireEvent.click(nodeCtrl);
@@ -505,8 +588,35 @@ describe("AdminHub Control Center", () => {
     await user.click(screen.getByTestId("test-brain-connection-btn"));
     expect(await screen.findByTestId("connection-test-result")).toHaveTextContent("142 ms");
 
-    // 5. Settings (Privacy & System) tab: excluded apps chip, interval slider
+    // 5. Settings (Privacy & System) tab: Floating Bar Glass & Translucency + excluded apps chip, interval slider
     await user.click(screen.getByTestId("tab-privacy"));
+    expect(screen.getByTestId("bar-glass-card")).toHaveTextContent("Floating Bar Glass & Translucency");
+    await user.click(screen.getByTestId("bar-blur-enabled-checkbox"));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_bar_glass",
+      expect.objectContaining({
+        blurEnabled: false,
+        blur_enabled: false,
+      }),
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_settings",
+      expect.objectContaining({
+        s: expect.objectContaining({ bar_blur_enabled: false }),
+      }),
+    );
+
+    fireEvent.change(screen.getByTestId("bar-opacity-slider"), {
+      target: { value: "0.45" },
+    });
+    expect(screen.getByTestId("bar-opacity-value")).toHaveTextContent("45%");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_bar_glass",
+      expect.objectContaining({
+        opacity: 0.45,
+      }),
+    );
+
     await user.type(screen.getByTestId("excluded-app-input"), "1password.exe");
     await user.click(screen.getByTestId("add-excluded-app-btn"));
     expect(mocks.invoke).toHaveBeenCalledWith(

@@ -25,6 +25,13 @@ export interface ResponseBlockProps {
   isSpeaking?: boolean;
   liveTurnLabel?: string | null;
   liveStatusText?: string | null;
+  sessionId?: string | null;
+  resolutionTier?: string | null;
+  tokensSaved?: number | null;
+  playbookId?: string | null;
+  feedbackSubmitted?: "worked" | "wrong" | null;
+  onReAskAi?: () => void;
+  onFeedback?: (worked: boolean) => void;
   onReplaySpeech?: () => void;
   onStopSpeech?: () => void;
   onOpenVoiceStudio?: () => void;
@@ -32,6 +39,14 @@ export interface ResponseBlockProps {
   onNextStep: () => void;
   onClose: () => void;
   onFallback: (brain: BrainKind) => void;
+}
+
+function formatTokensSaved(tokensSaved?: number | null): string {
+  const val = tokensSaved ?? 1400;
+  if (val >= 1000) {
+    return `~${(val / 1000).toFixed(1)}k tokens saved`;
+  }
+  return `~${val} tokens saved`;
 }
 
 export const ResponseBlock: React.FC<ResponseBlockProps> = ({
@@ -48,6 +63,12 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
   isSpeaking = false,
   liveTurnLabel = null,
   liveStatusText = null,
+  sessionId = null,
+  resolutionTier = null,
+  tokensSaved = null,
+  feedbackSubmitted = null,
+  onReAskAi,
+  onFeedback,
   onReplaySpeech,
   onStopSpeech,
   onOpenVoiceStudio,
@@ -71,8 +92,8 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
   };
 
   const containerClass = highContrast
-    ? "bg-[#09090B]/[0.88] backdrop-blur-xl border-2 border-[#FACC15] shadow-[0_8px_24px_rgba(0,0,0,0.32)]"
-    : "bg-[#0D0E12]/[0.58] hover:bg-[#0D0E12]/[0.74] focus-within:bg-[#0D0E12]/80 backdrop-blur-xl border border-white/[0.10] shadow-[0_8px_24px_rgba(0,0,0,0.24)]";
+    ? "w-full border-t-2 border-[#FACC15] bg-transparent px-4 py-2.5 text-[#F4F4F5] gl-glass-text transition-colors"
+    : "w-full border-t border-white/[0.14] bg-transparent px-4 py-2.5 text-[#F4F4F5] gl-glass-text transition-colors";
 
   if (loading || (liveStatusText && !step && !error)) {
     const statusText =
@@ -90,10 +111,10 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
         aria-live="polite"
         aria-label="Assistant loading status"
         data-testid="response-loading"
-        className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-2.5 text-[#F4F4F5] transition-colors`}
+        className={containerClass}
       >
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 text-[13px] text-[#E4E4E7] min-w-0">
+          <div className="flex items-center gap-2.5 text-[13px] text-[#F4F4F5] min-w-0">
             <span
               className="inline-block w-1.5 h-1.5 rounded-full bg-[#F4F4F5] animate-pulse shrink-0"
               aria-hidden="true"
@@ -104,7 +125,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Cancel request"
-            className="text-[11.5px] text-[#A1A1AA] hover:text-[#F4F4F5] px-2 py-0.5 rounded-lg hover:bg-white/[0.06] shrink-0 transition-colors"
+            className="text-[11.5px] text-white/85 hover:text-white px-2 py-0.5 rounded-lg bg-black/25 hover:bg-black/40 border border-white/[0.18] shrink-0 transition-colors"
           >
             Esc
           </button>
@@ -142,7 +163,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
         role="alert"
         aria-label="Brain error and fallback options"
         data-testid="response-error"
-        className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-3 text-[#F4F4F5] transition-colors`}
+        className={containerClass}
       >
         <div className="flex items-start justify-between gap-2">
           <p className="text-[13px] font-medium text-[#F4F4F5] leading-snug">
@@ -152,20 +173,20 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close error message"
-            className="text-[11.5px] text-[#A1A1AA] hover:text-[#F4F4F5] px-2 py-0.5 rounded-lg hover:bg-white/[0.06] shrink-0 transition-colors"
+            className="text-[11.5px] text-white/90 hover:text-white px-2.5 py-0.5 rounded-lg bg-black/25 hover:bg-black/40 border border-white/[0.18] shrink-0 transition-colors"
           >
             Close (Esc)
           </button>
         </div>
 
-        <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
           {fallbacks.map((fb) => (
             <button
               key={fb}
               type="button"
               onClick={() => onFallback(fb)}
               data-testid={`fallback-btn-${fb}`}
-              className="px-3 py-1 rounded-lg text-[12px] font-medium bg-white/[0.05] text-[#E4E4E7] border border-white/[0.10] hover:bg-white/[0.10] transition-colors"
+              className="px-3 py-1 rounded-lg text-[12px] font-medium bg-black/30 text-[#F4F4F5] border border-white/[0.20] hover:bg-black/45 transition-colors"
             >
               Use {BRAIN_LABELS[fb] ?? fb}
             </button>
@@ -195,17 +216,94 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
   const displayStepNum = stepIndex + 1;
   const displayTotal = Math.max(totalSteps, displayStepNum);
 
+  const isTier0 = resolutionTier === "tier0_playbook";
+  const isTier1 = resolutionTier === "tier1_text_graph";
+
   return (
     <section
       role="region"
       aria-live="polite"
       aria-label="Step guidance response"
       data-testid="response-block"
-      className={`${containerClass} mt-2 w-[620px] max-w-[96vw] rounded-2xl px-4 py-3 text-[#F4F4F5] transition-all`}
+      className={containerClass}
     >
+      {(resolutionTier || onFeedback) && (
+        <div className="mb-1.5 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            {isTier0 && (
+              <span
+                data-testid="resolution-tier-badge"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/75 border border-emerald-400/45 text-[10.5px] font-medium text-emerald-200"
+              >
+                Learned · 0 tokens
+              </span>
+            )}
+            {isTier1 && (
+              <span
+                data-testid="resolution-tier-badge"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-950/75 border border-sky-400/45 text-[10.5px] font-medium text-sky-200"
+              >
+                Graph · {formatTokensSaved(tokensSaved)}
+              </span>
+            )}
+            {resolutionTier === "tier2_vision" && (
+              <span
+                data-testid="resolution-tier-badge"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/30 border border-white/[0.18] text-[10.5px] font-medium text-[#F4F4F5]"
+              >
+                Vision · AI grounded
+              </span>
+            )}
+            {isTier0 && onReAskAi && (
+              <button
+                type="button"
+                onClick={onReAskAi}
+                data-testid="reask-ai-btn"
+                className="px-2 py-0.5 rounded-md bg-black/25 hover:bg-black/40 border border-white/[0.18] text-[10.5px] font-medium text-[#F4F4F5] transition-colors"
+              >
+                Re-ask AI
+              </button>
+            )}
+          </div>
+
+          {onFeedback && (sessionId || resolutionTier) && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onFeedback(true)}
+                data-testid="feedback-worked-btn"
+                aria-pressed={feedbackSubmitted === "worked"}
+                disabled={feedbackSubmitted !== null}
+                className={`px-2 py-0.5 rounded-md border text-[10.5px] font-medium transition-colors ${
+                  feedbackSubmitted === "worked"
+                    ? "bg-emerald-950/80 border-emerald-400/50 text-emerald-100"
+                    : "bg-black/25 hover:bg-black/40 border-white/[0.18] text-[#F4F4F5] disabled:opacity-65"
+                }`}
+              >
+                👍 {feedbackSubmitted === "worked" ? "Saved" : "Worked"}
+              </button>
+              <button
+                type="button"
+                onClick={() => onFeedback(false)}
+                data-testid="feedback-wrong-btn"
+                aria-pressed={feedbackSubmitted === "wrong"}
+                disabled={feedbackSubmitted !== null}
+                className={`px-2 py-0.5 rounded-md border text-[10.5px] font-medium transition-colors ${
+                  feedbackSubmitted === "wrong"
+                    ? "bg-amber-950/80 border-amber-400/50 text-amber-100"
+                    : "bg-black/25 hover:bg-black/40 border-white/[0.18] text-white/85 hover:text-white disabled:opacity-65"
+                }`}
+              >
+                👎 {feedbackSubmitted === "wrong" ? "Flagged" : "Wrong"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {isTerminal && step.terminal_command ? (
-        <div data-testid="terminal-variant" className="space-y-2">
-          <div className="flex items-center justify-between gap-2 rounded-xl bg-[#0A0B0D] border border-white/[0.08] px-3 py-2">
+        <div data-testid="terminal-variant" className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2 rounded-xl bg-black/45 border border-white/[0.16] px-3 py-2">
             <code
               data-testid="terminal-command-text"
               className="gl-mono text-[#F4F4F5] truncate select-all"
@@ -219,8 +317,8 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
               data-testid="copy-command-btn"
               className={`shrink-0 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border transition-colors ${
                 copied
-                  ? "bg-[#F4F4F5] text-[#0A0B0D] border-[#F4F4F5]"
-                  : "bg-white/[0.05] text-[#E4E4E7] border-white/[0.10] hover:bg-white/[0.10]"
+                  ? "bg-white text-[#0A0B0D] border-white [text-shadow:none]"
+                  : "bg-black/35 text-[#F4F4F5] border-white/[0.20] hover:bg-black/50"
               }`}
             >
               {copied ? "Copied!" : "Copy"}
@@ -228,7 +326,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
           </div>
           <p
             data-testid="terminal-explanation"
-            className="text-[12.5px] text-[#A1A1AA] leading-snug"
+            className="text-[12.5px] text-white/90 leading-snug"
           >
             {safeExplanation}
           </p>
@@ -246,7 +344,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
               {step.action_kind && (
                 <span
                   data-testid="step-action-kind"
-                  className="px-2 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.08] text-[10.5px] font-medium uppercase tracking-wide text-[#A1A1AA]"
+                  className="px-2 py-0.5 rounded-md bg-black/30 border border-white/[0.18] text-[10.5px] font-medium uppercase tracking-wide text-white/90"
                 >
                   {step.action_kind}
                 </span>
@@ -254,7 +352,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
               {step.shortcut && (
                 <kbd
                   data-testid="step-shortcut"
-                  className="gl-mono shrink-0 px-2 py-0.5 rounded-md bg-white/[0.07] border border-white/[0.12] text-[11px] text-[#E4E4E7]"
+                  className="gl-mono shrink-0 px-2 py-0.5 rounded-md bg-black/35 border border-white/[0.20] text-[11px] text-white"
                 >
                   {step.shortcut}
                 </kbd>
@@ -265,7 +363,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
           {safeSpokenWhisper && (
             <p
               data-testid="spoken-whisper"
-              className="text-[11.5px] text-[#A1A1AA] italic leading-snug"
+              className="text-[11.5px] text-white/90 italic leading-snug"
             >
               “{safeSpokenWhisper}”
             </p>
@@ -276,13 +374,13 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
       {!isTerminal && mode === "guide" && !hasHighlightBox && (
         <div
           data-testid="low-confidence-notice"
-          className="mt-1 text-[11.5px] text-[#71717A]"
+          className="mt-1 text-[11.5px] text-white/80"
         >
           Text-only guidance (target control not visually locked)
         </div>
       )}
 
-      <div className="mt-2.5 pt-2 border-t border-white/[0.07] flex items-center justify-between gap-2 text-[11.5px]">
+      <div className="mt-2 pt-2 border-t border-white/[0.12] flex items-center justify-between gap-2 text-[11.5px]">
         <div className="flex items-center gap-1.5 flex-wrap">
           <button
             type="button"
@@ -292,8 +390,8 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
             data-testid="magnify-toggle-btn"
             className={`px-2.5 py-0.5 rounded-lg border transition-colors ${
               magnify
-                ? "bg-white/[0.12] text-[#F4F4F5] border-white/20 font-medium"
-                : "bg-white/[0.04] text-[#A1A1AA] border-white/[0.08] hover:text-[#F4F4F5]"
+                ? "bg-black/45 text-white border-white/30 font-medium"
+                : "bg-black/25 text-white/90 border-white/[0.18] hover:text-white hover:bg-black/40"
             }`}
           >
             Magnify {magnify ? "On" : "Off"}
@@ -310,7 +408,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
                 aria-label="Stop speaking"
                 title="Stop spoken guidance"
                 data-testid="stop-speech-btn"
-                className="flex items-center gap-1 px-2.5 py-0.5 rounded-lg border bg-white/[0.12] text-[#F4F4F5] border-white/20 hover:bg-white/[0.16] font-medium transition-colors"
+                className="flex items-center gap-1 px-2.5 py-0.5 rounded-lg border bg-black/45 text-white border-white/30 hover:bg-black/55 font-medium transition-colors"
               >
                 <span
                   className="w-1.5 h-1.5 rounded-sm bg-current"
@@ -327,8 +425,8 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
                 data-testid="replay-speech-btn"
                 className={`flex items-center gap-1 px-2.5 py-0.5 rounded-lg border transition-colors ${
                   ttsEnabled
-                    ? "bg-white/[0.08] text-[#E4E4E7] border-white/[0.14] hover:bg-white/[0.12]"
-                    : "bg-white/[0.04] text-[#A1A1AA] border-white/[0.08] hover:text-[#F4F4F5]"
+                    ? "bg-black/30 text-white border-white/[0.20] hover:bg-black/45"
+                    : "bg-black/25 text-white/85 border-white/[0.18] hover:text-white hover:bg-black/40"
                 }`}
               >
                 <svg
@@ -352,7 +450,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
           <span
             aria-label={`Step ${displayStepNum} of ${displayTotal}`}
             data-testid="step-counter"
-            className="px-2 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.08] text-[#A1A1AA] font-medium text-[11px] tabular-nums"
+            className="px-2 py-0.5 rounded-md bg-black/30 border border-white/[0.18] text-white/90 font-medium text-[11px] tabular-nums"
           >
             {liveTurnLabel ?? `Step ${displayStepNum}/${displayTotal}`}
           </span>
@@ -360,7 +458,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
           {step.goal_complete && (
             <span
               data-testid="goal-complete-badge"
-              className="px-2 py-0.5 rounded-md bg-white/[0.10] border border-white/15 text-[#F4F4F5] font-medium text-[11px]"
+              className="px-2 py-0.5 rounded-md bg-black/35 border border-white/25 text-white font-medium text-[11px]"
             >
               Goal Complete
             </span>
@@ -375,7 +473,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
               aria-label="Open Voice Studio"
               title="Open Voice Studio"
               data-testid="response-voice-studio-btn"
-              className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-[#A1A1AA] border border-white/[0.08] hover:text-[#F4F4F5] hover:bg-white/[0.08] transition-colors"
+              className="px-2 py-0.5 rounded-lg bg-black/25 text-white/90 border border-white/[0.18] hover:text-white hover:bg-black/40 transition-colors"
             >
               Voice
             </button>
@@ -386,7 +484,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
               onClick={onNextStep}
               aria-label="Next step (Tab or Enter)"
               data-testid="next-step-btn"
-              className="px-2.5 py-0.5 rounded-lg bg-[#F4F4F5] text-[#0A0B0D] hover:bg-white font-medium transition-colors"
+              className="px-2.5 py-0.5 rounded-lg bg-white text-[#0A0B0D] hover:bg-zinc-100 font-medium transition-colors [text-shadow:none]"
             >
               Next →
             </button>
@@ -397,7 +495,7 @@ export const ResponseBlock: React.FC<ResponseBlockProps> = ({
             onClick={onClose}
             aria-label="Close overlay (Escape)"
             data-testid="close-response-btn"
-            className="px-2.5 py-0.5 rounded-lg bg-white/[0.04] text-[#A1A1AA] border border-white/[0.08] hover:text-[#F4F4F5] hover:bg-white/[0.08] transition-colors"
+            className="px-2.5 py-0.5 rounded-lg bg-black/25 text-white/90 border border-white/[0.18] hover:text-white hover:bg-black/40 transition-colors"
           >
             {displayStepNum >= displayTotal ? "Done" : "Close"}
           </button>

@@ -10,6 +10,7 @@ pub mod overlay;
 pub mod screenday;
 pub mod session;
 pub mod types;
+pub mod window_glass;
 
 use crate::db::DbState;
 use crate::overlay::OverlayState;
@@ -56,6 +57,9 @@ fn set_settings(app: AppHandle, db: State<'_, DbState>, s: Settings) -> Result<(
         }
     }
     overlay::sync_companion_with_settings(&app, &s);
+    if let Some(bar) = app.get_webview_window("bar") {
+        window_glass::apply_bar_acrylic(&bar, s.bar_opacity, s.bar_blur_enabled, s.high_contrast);
+    }
     let _ = tauri::Emitter::emit(&app, "settings-changed", &s);
     Ok(())
 }
@@ -223,30 +227,47 @@ pub fn run() {
                 }
             }
 
-            // Restore bar position if valid within virtual desktop, else center near top of primary monitor
+            // Restore bar position clamped to virtual desktop bounds & apply Acrylic glass
             if let Some(bar) = handle.get_webview_window("bar") {
-                let (vx, vy, vw, vh) = overlay::virtual_desktop_bounds();
-                let saved_pos = handle
+                let settings = handle
                     .try_state::<DbState>()
                     .and_then(|db| db.get_settings().ok())
-                    .and_then(|s| s.bar_position);
+                    .unwrap_or_default();
 
-                let in_bounds = saved_pos.filter(|pos| {
-                    pos.x >= vx
-                        && pos.x < vx + vw as i32 - 80
-                        && pos.y >= vy
-                        && pos.y < vy + vh as i32 - 40
-                });
+                let scale = bar
+                    .current_monitor()
+                    .ok()
+                    .flatten()
+                    .or_else(|| bar.primary_monitor().ok().flatten())
+                    .map(|m| m.scale_factor())
+                    .unwrap_or(1.0);
+                let default_w = (640.0 * scale).round() as i32;
+                let default_h = (54.0 * scale).round() as i32;
+                let (bar_w, bar_h) = bar
+                    .outer_size()
+                    .map(|sz| ((sz.width as i32).max(default_w), (sz.height as i32).max(default_h)))
+                    .unwrap_or((default_w, default_h));
 
-                if let Some(pos) = in_bounds {
-                    let _ = bar.set_position(PhysicalPosition::new(pos.x, pos.y));
+                if let Some(pos) = settings.bar_position {
+                    let (cx, cy) =
+                        window_glass::clamp_position_to_virtual_desktop(pos.x, pos.y, bar_w, bar_h);
+                    let _ = bar.set_position(PhysicalPosition::new(cx, cy));
                 } else if let Ok(Some(mon)) = bar.primary_monitor() {
-                    let scale = mon.scale_factor();
-                    let bar_w = (480.0 * scale).round() as i32;
-                    let x = mon.position().x + ((mon.size().width as i32 - bar_w) / 2).max(0);
-                    let y = mon.position().y + (48.0 * scale).round() as i32;
-                    let _ = bar.set_position(PhysicalPosition::new(x, y));
+                    let mon_scale = mon.scale_factor();
+                    let w_scaled = (640.0 * mon_scale).round() as i32;
+                    let raw_x = mon.position().x + ((mon.size().width as i32 - w_scaled) / 2).max(0);
+                    let raw_y = mon.position().y + (48.0 * mon_scale).round() as i32;
+                    let (cx, cy) =
+                        window_glass::clamp_position_to_virtual_desktop(raw_x, raw_y, w_scaled, default_h);
+                    let _ = bar.set_position(PhysicalPosition::new(cx, cy));
                 }
+
+                window_glass::apply_bar_acrylic(
+                    &bar,
+                    settings.bar_opacity,
+                    settings.bar_blur_enabled,
+                    settings.high_contrast,
+                );
 
                 let _ = bar.unminimize();
                 let _ = bar.show();
@@ -308,6 +329,15 @@ pub fn run() {
             memory::list_session_graphs,
             memory::read_graph_markdown,
             memory::delete_memory_node,
+            memory::get_default_options,
+            memory::run_playbook,
+            memory::report_guidance_feedback,
+            memory::list_compiled_playbooks,
+            memory::delete_playbook,
+            memory::get_learning_stats,
+            window_glass::set_bar_glass,
+            window_glass::save_bar_position,
+            window_glass::clamp_bar_position,
             screenday::screenday_set_enabled,
             screenday::screenday_status,
             screenday::screenday_capture_now,

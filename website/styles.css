@@ -339,10 +339,10 @@ html.is-scrolled .site-nav {
 
 .hero__reticle {
   position: absolute;
-  left: 72.4%;
-  top: 19.2%;
-  width: 11.6%;
-  height: 12.8%;
+  left: 84.2%;
+  top: 20.4%;
+  width: 10.6%;
+  height: 11.0%;
   pointer-events: none;
   transform: translate3d(0, calc(var(--sc-p, 0.5) * -6px), 0);
 }
@@ -486,7 +486,7 @@ html.is-scrolled .site-nav {
 .sim-media {
   position: relative;
   width: 100%;
-  aspect-ratio: 1280 / 420;
+  aspect-ratio: 2080 / 740;
   border-radius: var(--radius-inner);
   overflow: hidden;
   background: var(--color-paper);
@@ -543,25 +543,25 @@ html:not(.js) .sim-reticle--2 {
 }
 
 .sim-reticle--0 {
-  left: 0.4%;
-  top: 21.5%;
-  width: 47.6%;
-  height: 13.5%;
+  left: 24.4%;
+  top: 27.6%;
+  width: 50.8%;
+  height: 20.3%;
   border-color: var(--color-accent-2);
 }
 
 .sim-reticle--1 {
-  left: 72.4%;
-  top: 19.2%;
-  width: 11.6%;
-  height: 12.8%;
+  left: 84.2%;
+  top: 20.4%;
+  width: 10.6%;
+  height: 11.0%;
 }
 
 .sim-reticle--2 {
-  left: 65.5%;
-  top: 13.5%;
-  width: 19.2%;
-  height: 21.5%;
+  left: 51.0%;
+  top: 10.2%;
+  width: 44.6%;
+  height: 28.0%;
 }
 
 .sim-viewport[data-phase="0"] .sim-reticle--0,
@@ -596,9 +596,9 @@ html:not(.js) .sim-reticle--2 {
 
 .sim-hitbox {
   position: absolute;
-  left: 71.5%;
-  top: 14%;
-  width: 13.5%;
+  left: 83.2%;
+  top: 18.0%;
+  width: 12.6%;
   height: 48px;
   border: 0;
   border-radius: var(--radius-inner);
@@ -737,31 +737,31 @@ html:not(.js) .sim-reticle--2 {
 }
 
 .wipe__box--drift {
-  left: 59.5%;
-  top: 24.5%;
-  width: 11.2%;
-  height: 12.5%;
+  left: 70.0%;
+  top: 25.5%;
+  width: 10.6%;
+  height: 11.0%;
   border: 2px dashed var(--color-accent-2);
 }
 
 .wipe__box--drift span {
   right: 0;
   left: auto;
-  bottom: calc(100% + var(--space-3xs));
+  top: calc(100% + var(--space-3xs));
   color: var(--color-accent-2);
 }
 
 .wipe__box--snap {
-  left: 72.4%;
-  top: 19.2%;
-  width: 11.6%;
-  height: 12.8%;
+  left: 84.2%;
+  top: 20.4%;
+  width: 10.6%;
+  height: 11.0%;
   border: 2px solid var(--color-accent);
 }
 
 .wipe__box--snap span {
-  left: 0;
-  right: auto;
+  left: auto;
+  right: 0;
   top: calc(100% + var(--space-3xs));
   color: var(--color-accent);
 }
@@ -800,6 +800,33 @@ html:not(.js) .wipe__divider {
   margin: 0;
   opacity: 0;
   cursor: ew-resize;
+}
+
+.playbooks-band {
+  margin-top: var(--section-gap);
+  padding-top: var(--section-gap);
+  border-top: 1px solid var(--color-rule);
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: var(--space-xl);
+  align-items: center;
+}
+
+.playbooks-band__copy h3 {
+  margin-bottom: var(--space-sm);
+}
+
+.playbooks-band__copy .lead {
+  color: var(--color-ink-2);
+}
+
+.playbooks-band__media {
+  margin: 0;
+  padding: var(--space-md);
+}
+
+.playbooks-band__media img {
+  border-radius: var(--radius-inner);
 }
 
 /* Act 4: Companions & Shortcuts */
@@ -1236,6 +1263,7 @@ kbd {
   .hero__grid,
   .sim-grid,
   .grounding__grid,
+  .playbooks-band,
   .companions__grid,
   .companions__stage,
   .shortcuts-band,
@@ -1255,6 +1283,11 @@ kbd {
 }
 
 @media (max-width: 48rem) {
+  .hero__scrim {
+    background:
+      radial-gradient(ellipse 92% 52% at 38% 30%, color-mix(in oklab, var(--color-fog) 90%, transparent) 0%, color-mix(in oklab, var(--color-fog) 62%, transparent) 58%, transparent 86%),
+      linear-gradient(to bottom, transparent 68%, var(--color-paper) 100%);
+  }
   .nav-toggle {
     display: inline-flex;
     align-items: center;

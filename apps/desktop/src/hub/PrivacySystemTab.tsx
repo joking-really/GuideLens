@@ -4,6 +4,7 @@ import {
   authLogout,
   billingCheckout,
   openExternalUrl,
+  setBarGlass,
 } from "../lib/ipc";
 import type { AuthStatus, Settings, SttEngine } from "../types";
 
@@ -117,8 +118,85 @@ export const PrivacySystemTab: React.FC<PrivacySystemTabProps> = ({
       ? Math.min(100, Math.round((auth.usage / auth.limit) * 100))
       : 0;
 
+  const barOpacity = Number.isFinite(settings.bar_opacity)
+    ? Math.min(0.65, Math.max(0.12, settings.bar_opacity))
+    : 0.28;
+
   return (
     <div className="space-y-5" data-testid="panel-privacy">
+      {/* Floating Bar Glass & Translucency */}
+      <section
+        data-testid="bar-glass-card"
+        className="rounded-xl bg-[#111317] border border-white/[0.07] divide-y divide-white/[0.06]"
+      >
+        <div className="px-5 py-4 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-[13.5px] font-semibold text-[#F4F4F5]">
+              Floating Bar Glass &amp; Translucency
+            </h2>
+            <p className="text-[12px] text-[#8E929B] mt-0.5">
+              Native Windows 10/11 Acrylic frosted glass blur behind the command capsule
+            </p>
+          </div>
+          <label className="inline-flex items-center gap-2 cursor-pointer text-[12px] text-[#E4E4E7]">
+            <span>Windows Acrylic Frosted Glass</span>
+            <input
+              type="checkbox"
+              aria-label="Windows Acrylic Frosted Glass"
+              data-testid="bar-blur-enabled-checkbox"
+              checked={settings.bar_blur_enabled}
+              onChange={(e) => {
+                const nextBlur = e.target.checked;
+                void setBarGlass(barOpacity, nextBlur, settings.high_contrast);
+                void onUpdateSettings({ bar_blur_enabled: nextBlur });
+              }}
+              className="accent-[#F4F4F5]"
+            />
+          </label>
+        </div>
+
+        <div className="px-5 py-3.5 flex items-center justify-between gap-4">
+          <div>
+            <label
+              htmlFor="bar-opacity-slider"
+              className="block text-[12.5px] font-medium text-[#F4F4F5]"
+            >
+              Bar Tint Opacity
+            </label>
+            <span className="text-[11.5px] text-[#8E929B]">
+              Adjust frosted obsidian tint density (12%–65%)
+            </span>
+          </div>
+          <div className="flex items-center gap-3 w-52">
+            <input
+              id="bar-opacity-slider"
+              data-testid="bar-opacity-slider"
+              type="range"
+              min={0.12}
+              max={0.65}
+              step={0.01}
+              value={barOpacity}
+              onChange={(e) => {
+                const nextOpacity = Number(e.target.value);
+                void setBarGlass(
+                  nextOpacity,
+                  settings.bar_blur_enabled,
+                  settings.high_contrast,
+                );
+                void onUpdateSettings({ bar_opacity: nextOpacity });
+              }}
+              className="flex-1 h-1 accent-[#F4F4F5]"
+            />
+            <span
+              data-testid="bar-opacity-value"
+              className="font-mono text-[12px] text-[#F4F4F5] w-10 text-right tabular-nums"
+            >
+              {Math.round(barOpacity * 100)}%
+            </span>
+          </div>
+        </div>
+      </section>
+
       {/* Privacy Shield Settings */}
       <section className="rounded-xl bg-[#111317] border border-white/[0.07] divide-y divide-white/[0.06]">
         <div className="px-5 py-4 flex items-center justify-between gap-4">

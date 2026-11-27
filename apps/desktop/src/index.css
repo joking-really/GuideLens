@@ -26,12 +26,16 @@ body,
 #root {
   margin: 0;
   padding: 0;
-  background: transparent;
+  background: transparent !important;
   color: var(--gl-text-primary);
   font-family: var(--gl-font-sans);
   font-size: 13.5px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+}
+
+.gl-glass-text {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
 }
 
 .gl-glass-bar {

@@ -43,21 +43,21 @@
   var SIM_STATES = [
     {
       state: 'searching',
-      tag: 'Ctrl + Space',
-      status: 'Command bar ready on Ctrl + Space',
-      caption: 'Step 1 of 3: Press Ctrl + Space or click the target to test lock.'
+      tag: 'Ctrl + Space · 0 tok',
+      status: 'Acrylic bar & 1-click Default Options ready',
+      caption: 'Step 1 of 3: Summon with Ctrl + Space or click a 0-token Default Option.'
     },
     {
       state: 'locked',
       tag: 'UIA rect locked',
-      status: 'IUIAutomation snapped onto Run Workflow',
-      caption: 'Step 2 of 3: Click inside the highlighted Run Workflow button to advance.'
+      status: 'IUIAutomation snapped onto Export PDF',
+      caption: 'Step 2 of 3: Click inside the highlighted Export PDF button to advance.'
     },
     {
       state: 'remembered',
-      tag: 'Graph saved',
-      status: 'Step completed and stored in local graph',
-      caption: 'Step 3 of 3: Workflow saved for future recall. Click again to replay.'
+      tag: 'Playbook compiled · 0 tok',
+      status: 'Verified workflow promoted to Tier-0 playbook',
+      caption: 'Step 3 of 3: Replays locally at zero LLM tokens. Click again to replay.'
     }
   ];
 

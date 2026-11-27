@@ -2,14 +2,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   copyToClipboard,
   deleteMemoryNode,
+  deletePlaybook,
   getKnowledgeGraph,
+  getLearningStats,
+  listCompiledPlaybooks,
   listSessionGraphs,
   readGraphMarkdown,
+  runPlaybook,
 } from "../lib/ipc";
 import type {
+  CompiledPlaybookDto,
   KgEdgeDto,
   KgNodeDto,
   KnowledgeGraphDto,
+  LearningStatsDto,
   SessionGraphSummaryDto,
 } from "../types";
 import {
@@ -51,6 +57,19 @@ export const KnowledgeGraphTab: React.FC = () => {
     master_md_path: null,
   });
   const [sessionList, setSessionList] = useState<SessionGraphSummaryDto[]>([]);
+  const [playbooks, setPlaybooks] = useState<CompiledPlaybookDto[]>([]);
+  const [learningStats, setLearningStats] = useState<LearningStatsDto>({
+    total_playbooks: 0,
+    verified_playbooks: 0,
+    stale_playbooks: 0,
+    total_tier0_hits: 0,
+    total_tokens_saved: 0,
+  });
+  const [runningPlaybookId, setRunningPlaybookId] = useState<string | null>(null);
+  const [deletingPlaybookId, setDeletingPlaybookId] = useState<string | null>(
+    null,
+  );
+  const [playbookNotice, setPlaybookNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [appFilter, setAppFilter] = useState<string>("");
@@ -82,11 +101,21 @@ export const KnowledgeGraphTab: React.FC = () => {
   const loadGraphData = useCallback(async (app?: string) => {
     setLoading(true);
     try {
-      const [kg, sessions] = await Promise.all([
+      const [kg, sessions, compiled, stats] = await Promise.all([
         getKnowledgeGraph(app || null),
         listSessionGraphs(null, 50),
+        listCompiledPlaybooks(app || null).catch(() => []),
+        getLearningStats().catch(() => ({
+          total_playbooks: 0,
+          verified_playbooks: 0,
+          stale_playbooks: 0,
+          total_tier0_hits: 0,
+          total_tokens_saved: 0,
+        })),
       ]);
       setGraph(kg);
+      setPlaybooks(compiled);
+      setLearningStats(stats);
       const mergedSessions = sessions.length > 0 ? sessions : kg.sessions;
       setSessionList(mergedSessions);
       if (!selectedSessionPathRef.current && mergedSessions.length > 0) {
@@ -101,6 +130,35 @@ export const KnowledgeGraphTab: React.FC = () => {
       setLoading(false);
     }
   }, []);
+
+  const handleRunPlaybook = async (playbook: CompiledPlaybookDto) => {
+    setRunningPlaybookId(playbook.id);
+    setPlaybookNotice(null);
+    try {
+      const res = await runPlaybook(playbook.id, false);
+      setPlaybookNotice(
+        `Ran "${playbook.display_label || playbook.canonical_goal}" (${res.resolution_tier ?? "tier0_playbook"})`,
+      );
+      await loadGraphData(appFilter);
+    } catch (err) {
+      setPlaybookNotice(
+        err instanceof Error ? err.message : "Unable to run playbook on active screen.",
+      );
+    } finally {
+      setRunningPlaybookId(null);
+    }
+  };
+
+  const handleDeletePlaybook = async (playbookId: string) => {
+    setDeletingPlaybookId(playbookId);
+    setPlaybookNotice(null);
+    try {
+      await deletePlaybook(playbookId);
+      await loadGraphData(appFilter);
+    } finally {
+      setDeletingPlaybookId(null);
+    }
+  };
 
   useEffect(() => {
     void loadGraphData(appFilter);
@@ -212,6 +270,139 @@ export const KnowledgeGraphTab: React.FC = () => {
 
   return (
     <div className="space-y-4" data-testid="panel-graph">
+      {/* Compiled Playbooks & Token Savings KPI + Table */}
+      <section
+        data-testid="compiled-playbooks-section"
+        className="rounded-xl bg-[#111317] border border-white/[0.07] p-4 space-y-3"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-[13.5px] font-semibold text-[#F4F4F5]">
+              Compiled Playbooks &amp; Token Savings
+            </h2>
+            <p className="text-[11.5px] text-[#8E929B]">
+              Verified workflows execute at Tier 0 (0 LLM tokens) via live Windows UI Automation
+            </p>
+          </div>
+          {playbookNotice && (
+            <span
+              data-testid="playbook-notice"
+              className="text-[11.5px] text-[#E4E4E7] px-2.5 py-1 rounded-md bg-white/[0.05] border border-white/[0.08]"
+            >
+              {playbookNotice}
+            </span>
+          )}
+        </div>
+
+        <div
+          data-testid="learning-stats-kpi"
+          className="grid grid-cols-2 sm:grid-cols-4 gap-2.5"
+        >
+          <div className="rounded-lg bg-[#0A0B0D] border border-white/[0.07] px-3 py-2">
+            <div className="text-[11px] text-[#8E929B]">Compiled Playbooks</div>
+            <div className="text-[16px] font-semibold text-[#F4F4F5] tabular-nums mt-0.5">
+              {learningStats.total_playbooks}
+            </div>
+          </div>
+          <div className="rounded-lg bg-[#0A0B0D] border border-white/[0.07] px-3 py-2">
+            <div className="text-[11px] text-[#8E929B]">Verified (0-Token)</div>
+            <div className="text-[16px] font-semibold text-emerald-300 tabular-nums mt-0.5">
+              {learningStats.verified_playbooks}
+            </div>
+          </div>
+          <div className="rounded-lg bg-[#0A0B0D] border border-white/[0.07] px-3 py-2">
+            <div className="text-[11px] text-[#8E929B]">Tier-0 Hits</div>
+            <div className="text-[16px] font-semibold text-[#F4F4F5] tabular-nums mt-0.5">
+              {learningStats.total_tier0_hits}
+            </div>
+          </div>
+          <div className="rounded-lg bg-[#0A0B0D] border border-white/[0.07] px-3 py-2">
+            <div className="text-[11px] text-[#8E929B]">Tokens Saved</div>
+            <div className="text-[16px] font-semibold text-emerald-300 tabular-nums mt-0.5">
+              {learningStats.total_tokens_saved.toLocaleString()}
+            </div>
+          </div>
+        </div>
+
+        {playbooks.length === 0 ? (
+          <p className="text-[12px] text-[#5C606A]">
+            No compiled playbooks yet. Confirm a step with 👍 Worked or complete a Live Session to promote it into a zero-token playbook.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-white/[0.07] bg-[#0A0B0D]">
+            <table className="w-full text-left text-[12px]">
+              <thead className="border-b border-white/[0.07] text-[11px] uppercase tracking-wide text-[#8E929B]">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Playbook</th>
+                  <th className="px-3 py-2 font-medium">App / View</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Hit / Fail</th>
+                  <th className="px-3 py-2 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.06]">
+                {playbooks.map((pb) => {
+                  const tierBadge =
+                    pb.confidence_tier === "verified"
+                      ? "bg-emerald-500/15 border-emerald-400/35 text-emerald-300"
+                      : pb.confidence_tier === "stale"
+                        ? "bg-amber-500/15 border-amber-400/35 text-amber-300"
+                        : "bg-white/[0.05] border-white/[0.10] text-[#A1A1AA]";
+                  return (
+                    <tr key={pb.id} data-testid={`playbook-row-${pb.id}`}>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-[#F4F4F5]">
+                          {pb.display_label || pb.canonical_goal}
+                        </div>
+                        <div className="text-[11px] text-[#5C606A] truncate max-w-[260px]">
+                          {pb.canonical_goal} · {pb.steps.length} step
+                          {pb.steps.length === 1 ? "" : "s"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[11px] text-[#8E929B]">
+                        {pb.view_key || pb.app_exe}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded border text-[10.5px] font-medium capitalize ${tierBadge}`}
+                        >
+                          {pb.confidence_tier}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[11.5px] text-[#D4D4D8] tabular-nums">
+                        {pb.success_count} / {pb.failure_count}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            data-testid={`playbook-run-${pb.id}`}
+                            disabled={runningPlaybookId === pb.id}
+                            onClick={() => void handleRunPlaybook(pb)}
+                            className="px-2.5 py-1 rounded-md bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.10] text-[11px] font-medium text-[#F4F4F5] disabled:opacity-40 transition-colors"
+                          >
+                            {runningPlaybookId === pb.id ? "Running…" : "Run Now"}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`playbook-delete-${pb.id}`}
+                            disabled={deletingPlaybookId === pb.id}
+                            onClick={() => void handleDeletePlaybook(pb.id)}
+                            className="px-2 py-1 rounded-md bg-white/[0.04] hover:bg-white/[0.10] border border-white/[0.08] text-[11px] text-[#A1A1AA] hover:text-[#F4F4F5] disabled:opacity-40 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {/* Filter & Search Bar */}
       <section className="rounded-xl bg-[#111317] border border-white/[0.07] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2.5">

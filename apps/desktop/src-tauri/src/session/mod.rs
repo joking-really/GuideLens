@@ -50,6 +50,8 @@ struct LiveSessionInner {
     conversation_history: Vec<String>,
     generation: u64,
     settle_pending: bool,
+    verified_click_count: u32,
+    last_click_at: Option<Instant>,
 }
 
 impl Default for LiveSessionInner {
@@ -65,6 +67,8 @@ impl Default for LiveSessionInner {
             conversation_history: Vec::new(),
             generation: 0,
             settle_pending: false,
+            verified_click_count: 0,
+            last_click_at: None,
         }
     }
 }
@@ -302,6 +306,163 @@ async fn execute_live_step(
         "thinking",
         Some("Watching your screen...".to_string()),
     );
+
+    // Tier-0 Playbook check on the first live turn (0 LLM tokens)
+    if is_first_turn && brain_override.is_none() {
+        let (win, monitor) =
+            tokio::task::spawn_blocking(crate::memory::compiler::detect_active_window_and_monitor)
+                .await
+                .unwrap_or_else(|_| {
+                    (
+                        crate::capture::detect_active_window(),
+                        crate::types::MonitorInfo::default(),
+                    )
+                });
+        let mem_started = Instant::now();
+        let tier0 = crate::memory::compiler::find_best_tier0_playbook(
+            db,
+            &win.active_app,
+            &win.window_title,
+            &goal,
+        );
+        let memory_ms = mem_started.elapsed().as_millis() as u64;
+        if let Some((pb, _)) = tier0 {
+            let mon_uia = monitor.clone();
+            let hwnd = win.hwnd;
+            let ground_started = Instant::now();
+            let uia_cands = tokio::task::spawn_blocking(move || {
+                crate::grounding::uia_fast::collect_fast_uia_and_taskbar(hwnd, &mon_uia)
+            })
+            .await
+            .unwrap_or_default();
+            let mon_merge = monitor.clone();
+            let elements = tokio::task::spawn_blocking(move || {
+                crate::grounding::som_renderer::merge_and_number_candidates(uia_cands, &mon_merge)
+            })
+            .await
+            .unwrap_or_default();
+            let grounding_ms = ground_started.elapsed().as_millis() as u64;
+
+            if let Some(resolved_steps) =
+                crate::memory::compiler::verify_playbook_on_live_uia(&pb, &monitor, &elements)
+            {
+                if let Some(mut step) = resolved_steps.into_iter().next() {
+                    let _ = db.record_playbook_hit(&pb.id, 1800);
+                    let app_clone = app.clone();
+                    let live_dhash = tokio::task::spawn_blocking(move || {
+                        crate::capture::capture_for_live_grounding(Some(&app_clone))
+                            .ok()
+                            .map(|f| f.dhash64)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+
+                    let total_ms = total_started.elapsed().as_millis() as u64;
+                    let latency = LatencyBreakdown {
+                        capture_ms: 0,
+                        grounding_ms,
+                        memory_ms,
+                        llm_ms: 0,
+                        total_ms,
+                    };
+                    brain_state.record_latency(latency);
+
+                    let now = unix_now();
+                    let is_goal_complete =
+                        step.goal_complete || step.action_kind.as_deref() == Some("complete");
+                    step.step_number = 1;
+
+                    let _ = crate::db::insert_session(
+                        db,
+                        &session_id,
+                        &win.active_app,
+                        &goal,
+                        BrainKind::LocalVlm,
+                        started_at,
+                    );
+                    let bbox_json = step.bbox.and_then(|b| serde_json::to_string(&b).ok());
+                    let _ = crate::db::insert_step(
+                        db,
+                        &session_id,
+                        1,
+                        &step.instruction_line,
+                        bbox_json.as_deref(),
+                        step.terminal_command.as_deref(),
+                        None,
+                    );
+
+                    {
+                        let mut guard = session_mgr
+                            .inner
+                            .lock()
+                            .map_err(|_| "LiveSessionManager mutex poisoned".to_string())?;
+                        if guard.generation != expected_gen {
+                            return Ok(guard.state.clone());
+                        }
+                        let turn = LiveSessionTurn {
+                            turn_number: 1,
+                            user_text: user_text.clone(),
+                            instruction_line: step.instruction_line.clone(),
+                            spoken_text: step.spoken_text.clone(),
+                            action_kind: step.action_kind.clone(),
+                            companion_emotion: step.companion_emotion.clone(),
+                            target_name: step.target_name.clone(),
+                            rect_px: step.rect_px,
+                            active_app: win.active_app.clone(),
+                            window_title: win.window_title.clone(),
+                            latency: Some(latency),
+                            timestamp: now,
+                        };
+                        guard.last_dhash64 = live_dhash;
+                        guard.last_hwnd = win.hwnd;
+                        guard.last_window_title = win.window_title.clone();
+                        guard.active_app = win.active_app.clone();
+                        guard.resolved_steps.push(step.clone());
+                        guard.state.turns.push(turn);
+                        guard.state.turn_count = 1;
+                        guard.state.current_step = Some(step.clone());
+                        guard.state.current_monitor = Some(monitor.clone());
+                        guard.state.companion_id = settings.companion_id.clone();
+                        guard.conversation_history.push(format!(
+                            "Turn 1 ({}): {} [target: {}]",
+                            win.active_app,
+                            step.instruction_line,
+                            step.target_name.as_deref().unwrap_or("none")
+                        ));
+                        guard.state.status = if is_goal_complete {
+                            LiveSessionStatus::Completed
+                        } else {
+                            LiveSessionStatus::Guiding
+                        };
+                    }
+
+                    let step_mode = if step.terminal_command.is_some() {
+                        crate::types::StepMode::Terminal
+                    } else {
+                        crate::types::StepMode::Guide
+                    };
+                    if let Err(e) = overlay::start_guidance(
+                        app,
+                        vec![step],
+                        step_mode,
+                        None,
+                        Some(monitor),
+                        Some(session_id.clone()),
+                    ) {
+                        log::warn!("Failed to start live Tier-0 overlay guidance: {}", e);
+                    }
+
+                    let snapshot = session_mgr.snapshot();
+                    emit_live_session(app, &snapshot);
+                    if is_goal_complete {
+                        crate::input::release_overlay_hooks_if_idle(app);
+                    }
+                    return Ok(snapshot);
+                }
+            }
+        }
+    }
 
     let prepared = crate::grounding::capture_and_ground(Some(app)).await?;
     if session_mgr.current_generation() != expected_gen {
@@ -584,6 +745,8 @@ pub async fn start_live_session_impl(
         guard.resolved_steps.clear();
         guard.conversation_history.clear();
         guard.settle_pending = false;
+        guard.verified_click_count = 0;
+        guard.last_click_at = None;
         guard.state = LiveSessionState {
             session_id: Some(new_session_id),
             status: LiveSessionStatus::Listening,
@@ -812,6 +975,8 @@ pub async fn end_live_session_impl(
 
         let already_recorded = guard.state.status == LiveSessionStatus::Completed
             && guard.state.graph_md_path.is_some();
+        let truly_completed =
+            guard.state.status == LiveSessionStatus::Completed || guard.verified_click_count > 0;
 
         guard.generation = guard.generation.wrapping_add(1);
         guard.settle_pending = false;
@@ -825,6 +990,7 @@ pub async fn end_live_session_impl(
                     guard.state.goal.clone(),
                     guard.resolved_steps.clone(),
                     guard.state.turns.clone(),
+                    truly_completed,
                 )
             })
         } else {
@@ -832,9 +998,15 @@ pub async fn end_live_session_impl(
         }
     };
 
-    if let Some((sid, app_exe, goal, steps, turns)) = record_payload {
+    if let Some((sid, app_exe, goal, steps, turns, truly_completed)) = record_payload {
         match crate::memory::record_session_and_write_graph(
-            db, &sid, &app_exe, &goal, &steps, &turns, true,
+            db,
+            &sid,
+            &app_exe,
+            &goal,
+            &steps,
+            &turns,
+            truly_completed,
         ) {
             Ok(summary) => {
                 if let Ok(mut guard) = session_mgr.inner.lock() {
@@ -925,6 +1097,12 @@ pub fn notify_user_click(app: &AppHandle, x: i32, y: i32) {
         if guard.state.status != LiveSessionStatus::Guiding || guard.settle_pending {
             return;
         }
+        if let Some(last) = guard.last_click_at {
+            if last.elapsed() < Duration::from_millis(250) {
+                return;
+            }
+        }
+        guard.last_click_at = Some(Instant::now());
         guard.settle_pending = true;
         guard.state.status = LiveSessionStatus::WaitingSettle;
         let snap = guard.state.clone();
@@ -1031,6 +1209,10 @@ pub fn notify_user_click(app: &AppHandle, x: i32, y: i32) {
                 &app_handle,
                 Some("Checking next step...".to_string()),
             );
+        } else if let Ok(mut guard) = mgr.inner.lock() {
+            if guard.generation == expected_gen {
+                guard.verified_click_count = guard.verified_click_count.saturating_add(1);
+            }
         }
 
         let (Some(db), Some(brain_state)) = (
@@ -1356,5 +1538,33 @@ mod tests {
         assert_eq!(overlay_state.current_rect(), None);
         assert!(mgr.is_active());
         assert!(!mgr.is_guiding());
+    }
+
+    #[test]
+    fn verified_click_count_and_debounce_track_truthful_completion() {
+        let mgr = LiveSessionManager::new();
+        {
+            let mut guard = mgr.inner.lock().unwrap();
+            guard.state.session_id = Some("live-v23".to_string());
+            guard.state.status = LiveSessionStatus::Guiding;
+            guard.verified_click_count = 0;
+            guard.last_click_at = Some(Instant::now());
+        }
+        // Within 250ms debounce window
+        {
+            let guard = mgr.inner.lock().unwrap();
+            assert!(guard.last_click_at.unwrap().elapsed() < Duration::from_millis(250));
+            let truly_completed =
+                guard.state.status == LiveSessionStatus::Completed || guard.verified_click_count > 0;
+            assert!(!truly_completed);
+        }
+        // After a confirmed target click + settle increments verified_click_count
+        {
+            let mut guard = mgr.inner.lock().unwrap();
+            guard.verified_click_count += 1;
+            let truly_completed =
+                guard.state.status == LiveSessionStatus::Completed || guard.verified_click_count > 0;
+            assert!(truly_completed);
+        }
     }
 }

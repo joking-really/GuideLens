@@ -9,7 +9,7 @@ use crate::brain::groq_pro::{AuthStatus, CloudEndpoints, GroqProProvider};
 use crate::brain::ollama::{resolve_ollama_base_url, OllamaProvider};
 use crate::brain::prompts::{
     build_grounded_system_prompt, build_grounded_user_prompt, build_system_prompt,
-    build_user_prompt, GroundedPromptContext,
+    build_text_only_system_prompt, build_user_prompt, GroundedPromptContext,
 };
 use crate::brain::provider::{BrainError, BrainErrorCode, BrainProvider, BrainRequest};
 use crate::brain::secrets::SecretStore;
@@ -290,6 +290,43 @@ pub fn build_grounded_brain_request(
         conversation_history,
         has_som: !element_table_prompt.trim().is_empty(),
         max_tokens: if live_mode { Some(280) } else { None },
+    }
+}
+
+/// Constructs a Tier-1 text-only `BrainRequest` (no screenshot bytes) for fast UIA + KG disambiguation.
+#[allow(clippy::too_many_arguments)]
+pub fn build_text_only_grounded_request(
+    query: &str,
+    active_app: &str,
+    window_title: &str,
+    screen_resolution: (u32, u32),
+    element_table_prompt: &str,
+    memory_hints: &str,
+    companion_id: &str,
+    conversation_history: Vec<String>,
+) -> BrainRequest {
+    let system_prompt = build_text_only_system_prompt(active_app, window_title, companion_id);
+    let user_prompt = build_grounded_user_prompt(&GroundedPromptContext {
+        query,
+        active_exe: active_app,
+        window_title,
+        screen_size: screen_resolution,
+        element_table_prompt,
+        memory_hints,
+        session_history: &conversation_history,
+    });
+    BrainRequest {
+        query: query.trim().to_string(),
+        image_base64: String::new(),
+        image_path: String::new(),
+        active_app: active_app.to_string(),
+        window_title: window_title.to_string(),
+        screen_resolution,
+        system_prompt,
+        user_prompt,
+        conversation_history,
+        has_som: !element_table_prompt.trim().is_empty(),
+        max_tokens: Some(260),
     }
 }
 

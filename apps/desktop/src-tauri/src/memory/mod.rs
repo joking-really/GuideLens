@@ -1,6 +1,7 @@
 //! Self-improving Knowledge Graph memory, per-session `.graph.md` persistence,
 //! and Tauri IPC commands for inspecting and pruning learned UI workflows.
 
+pub mod compiler;
 pub mod graph_md;
 pub mod retriever;
 
@@ -10,14 +11,16 @@ pub use graph_md::{
 };
 pub use retriever::retrieve_memory_hints;
 
+use crate::brain::BrainState;
 use crate::db::{unix_now, DbState};
 use crate::types::{
-    KgEdgeDto, KgNodeDto, KnowledgeGraphDto, LiveSessionTurn, ResolvedStep,
-    SessionGraphSummaryDto,
+    AskResponse, CompiledPlaybookDto, DefaultOptionsResponse, KgEdgeDto, KgNodeDto,
+    KnowledgeGraphDto, LearningStatsDto, LiveSessionTurn, RectPx, ResolvedStep,
+    SessionGraphSummaryDto, Step, StepSource,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 fn pretty_app_name(app_exe: &str) -> String {
     let trimmed = app_exe.trim();
@@ -215,16 +218,13 @@ pub fn record_session_and_write_graph_in(
         });
 
     let screen_node_id = if let Some(title) = screen_title {
-        let sid = format!(
-            "screen:{}:{}",
-            app_slug,
-            graph_md::fnv1a_64_hex(&title.to_ascii_lowercase())
-        );
+        let view_key = compiler::normalize_view_key(app_clean, title);
+        let sid = format!("screen:{}:{}", app_slug, graph_md::fnv1a_64_hex(&view_key));
         db.upsert_kg_node(&KgNodeDto {
             id: sid.clone(),
             node_type: "screen".to_string(),
             app_exe: app_clean.to_string(),
-            label: title.chars().take(120).collect(),
+            label: view_key,
             metadata_json: None,
             hit_count: 1,
             updated_at: now,
@@ -316,7 +316,7 @@ pub fn record_session_and_write_graph_in(
             relation: if completed {
                 "verified_step".to_string()
             } else {
-                "observed_step".to_string()
+                "inferred_step".to_string()
             },
             intent: combined_intent,
             control_name: Some(item.control_name.clone()),
@@ -326,6 +326,17 @@ pub fn record_session_and_write_graph_in(
             success_count: 1,
             updated_at: now,
         })?;
+    }
+
+    if let Err(e) = compiler::compile_session_into_playbook(
+        db,
+        app_clean,
+        screen_title.unwrap_or(""),
+        goal_clean,
+        steps,
+        completed,
+    ) {
+        log::warn!("Failed to compile playbook for session {}: {}", session_id, e);
     }
 
     let (graph_md_path, node_count, edge_count) = graph_md::write_session_graph_md_in(
@@ -457,6 +468,217 @@ pub fn delete_memory_node(db: State<'_, DbState>, node_id: String) -> Result<(),
         let _ = graph_md::write_master_knowledge_graph_md(&full_kg);
     }
     Ok(())
+}
+
+/// Returns top non-stale compiled playbooks for the active app (or `app_exe`) as 1-click Default Options.
+#[tauri::command]
+pub fn get_default_options(
+    db: State<'_, DbState>,
+    app_exe: Option<String>,
+    limit: Option<usize>,
+) -> Result<DefaultOptionsResponse, String> {
+    let (detected_app, detected_title) = match app_exe
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(explicit) => {
+            let win = crate::capture::detect_active_window();
+            let title = if win.active_app.eq_ignore_ascii_case(explicit) {
+                win.window_title
+            } else {
+                String::new()
+            };
+            (explicit.to_string(), title)
+        }
+        None => {
+            let win = crate::capture::detect_active_window();
+            (win.active_app, win.window_title)
+        }
+    };
+
+    Ok(compiler::get_default_options_for_app(
+        &db,
+        &detected_app,
+        &detected_title,
+        limit.unwrap_or(4),
+    ))
+}
+
+/// Executes a compiled playbook directly via Tier-0 UIA verification (0 LLM tokens),
+/// or falls back to AI re-grounding when `force_ai` is true or live controls are not visible.
+#[tauri::command]
+pub async fn run_playbook(
+    app: AppHandle,
+    db: State<'_, DbState>,
+    brain_state: State<'_, BrainState>,
+    playbook_id: String,
+    force_ai: Option<bool>,
+) -> Result<AskResponse, String> {
+    let pb = db
+        .get_playbook_by_id(playbook_id.trim())?
+        .ok_or_else(|| format!("Playbook '{}' not found", playbook_id))?;
+
+    if !force_ai.unwrap_or(false) {
+        let started = std::time::Instant::now();
+        let (win, monitor) = compiler::detect_active_window_and_monitor();
+        if let Some(resp) = crate::brain::commands::execute_playbook_tier0(
+            &app,
+            &db,
+            &brain_state,
+            pb.clone(),
+            win.active_app,
+            win.window_title,
+            win.hwnd,
+            monitor,
+            None,
+            started,
+            0,
+            crate::types::BrainKind::LocalVlm,
+        )
+        .await
+        {
+            return Ok(resp);
+        }
+    }
+
+    crate::brain::commands::ask_inner(
+        &app,
+        &db,
+        &brain_state,
+        pb.canonical_goal,
+        None,
+        true,
+    )
+    .await
+}
+
+/// Records explicit user feedback (`Worked` / `Didn't work`) to promote or demote playbooks and KG edges.
+pub fn report_guidance_feedback_impl(
+    db: &DbState,
+    session_id: &str,
+    playbook_id: Option<&str>,
+    worked: bool,
+) -> Result<(), String> {
+    let clean_sid = session_id.trim();
+    if worked && !clean_sid.is_empty() {
+        let _ = db.mark_session_steps_completed(clean_sid);
+    }
+
+    let session_meta = if clean_sid.is_empty() {
+        None
+    } else {
+        db.get_session_meta(clean_sid).ok().flatten()
+    };
+
+    let explicit_pid = playbook_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let mut updated_pb: Option<CompiledPlaybookDto> = None;
+    if let Some(pid) = explicit_pid {
+        updated_pb = db.record_playbook_feedback(pid, worked)?;
+    } else if let Some((ref app_exe, ref user_query)) = session_meta {
+        let items = db.list_playbooks_with_meta_for_app(app_exe).unwrap_or_default();
+        let vocab_idf = compiler::compute_vocab_idf(&items);
+        let best_id = items
+            .iter()
+            .filter_map(|(pb, aliases, _)| {
+                let s = compiler::score_goal_match_with_aliases(user_query, pb, aliases, &vocab_idf);
+                (s >= compiler::PLAYBOOK_CLUSTER_THRESHOLD).then_some((pb.id.clone(), s))
+            })
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(id, _)| id);
+
+        if let Some(pid) = best_id {
+            updated_pb = db.record_playbook_feedback(&pid, worked)?;
+        } else if worked {
+            if let Ok(detail) = db.history_get(clean_sid) {
+                let steps: Vec<ResolvedStep> = detail
+                    .steps
+                    .into_iter()
+                    .map(|hs| {
+                        let rect_px = hs.bbox.map(|b| RectPx {
+                            x: b[0].round() as i32,
+                            y: b[1].round() as i32,
+                            w: b[2].round() as i32,
+                            h: b[3].round() as i32,
+                        });
+                        ResolvedStep::from_step(
+                            Step {
+                                step_number: hs.step_number,
+                                instruction_line: hs.instruction_line,
+                                target_name: None,
+                                control_type: None,
+                                bbox: hs.bbox,
+                                confidence: 0.9,
+                                shortcut: None,
+                                terminal_command: hs.terminal_command,
+                                explanation: None,
+                                spoken_text: None,
+                                target_id: None,
+                                action_kind: None,
+                                companion_emotion: None,
+                                goal_complete: false,
+                            },
+                            rect_px,
+                            if rect_px.is_some() {
+                                StepSource::Vlm
+                            } else {
+                                StepSource::None
+                            },
+                        )
+                    })
+                    .collect();
+                if let Ok(Some(pb)) = compiler::compile_session_into_playbook(
+                    db,
+                    app_exe,
+                    "",
+                    user_query,
+                    &steps,
+                    true,
+                ) {
+                    updated_pb = Some(pb);
+                }
+            }
+        }
+    }
+
+    if let Some((ref app_exe, ref user_query)) = session_meta {
+        let _ = db.update_edge_feedback(app_exe, user_query, worked);
+    } else if let Some(ref pb) = updated_pb {
+        let _ = db.update_edge_feedback(&pb.app_exe, &pb.canonical_goal, worked);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn report_guidance_feedback(
+    db: State<'_, DbState>,
+    session_id: String,
+    playbook_id: Option<String>,
+    worked: bool,
+) -> Result<(), String> {
+    report_guidance_feedback_impl(&db, &session_id, playbook_id.as_deref(), worked)
+}
+
+#[tauri::command]
+pub fn list_compiled_playbooks(
+    db: State<'_, DbState>,
+    app_filter: Option<String>,
+) -> Result<Vec<CompiledPlaybookDto>, String> {
+    db.list_all_playbooks(app_filter.as_deref())
+}
+
+#[tauri::command]
+pub fn delete_playbook(db: State<'_, DbState>, playbook_id: String) -> Result<(), String> {
+    db.delete_playbook(playbook_id.trim())
+}
+
+#[tauri::command]
+pub fn get_learning_stats(db: State<'_, DbState>) -> Result<LearningStatsDto, String> {
+    db.get_learning_stats()
 }
 
 #[cfg(test)]
@@ -605,5 +827,64 @@ mod tests {
         assert!(hints.contains("Ctrl+Shift+`"));
         assert!(hints.contains("Verified 2x"));
         assert!(mem_dir.join("knowledge-graph.md").exists());
+    }
+
+    #[test]
+    fn test_inferred_vs_verified_and_feedback_promotion() {
+        let tmp = tempdir().expect("tempdir");
+        let db = DbState::open(&tmp.path().join("feedback.db")).expect("open db");
+        let days_dir = tmp.path().join("days");
+        let mem_dir = tmp.path().join("memory");
+
+        let steps = vec![ResolvedStep {
+            step_number: 1,
+            instruction_line: "Click Save".to_string(),
+            target_name: Some("Save".to_string()),
+            control_type: Some("Button".to_string()),
+            bbox: Some([20.0, 20.0, 50.0, 25.0]),
+            confidence: 0.9,
+            shortcut: Some("Ctrl+S".to_string()),
+            terminal_command: None,
+            explanation: None,
+            spoken_text: None,
+            target_id: Some(1),
+            action_kind: Some("click".to_string()),
+            companion_emotion: Some("pointing".to_string()),
+            goal_complete: false,
+            rect_px: None,
+            source: StepSource::Uia,
+        }];
+
+        db.insert_session("sess-inf", "notepad.exe", "Save file", crate::types::BrainKind::LocalVlm, 100)
+            .unwrap();
+
+        record_session_and_write_graph_in(
+            &db,
+            &days_dir,
+            &mem_dir,
+            "sess-inf",
+            "notepad.exe",
+            "Save file",
+            &steps,
+            &[],
+            false,
+        )
+        .unwrap();
+
+        let kg = db.query_kg_for_app("notepad.exe", 20).unwrap();
+        assert!(kg.edges.iter().any(|e| e.relation == "inferred_step"));
+        assert!(!kg.edges.iter().any(|e| e.relation == "verified_step"));
+
+        let list = db.list_playbooks_for_app("notepad.exe").unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].confidence_tier, "inferred");
+
+        report_guidance_feedback_impl(&db, "sess-inf", Some(&list[0].id), true).unwrap();
+        let after = db.get_playbook_by_id(&list[0].id).unwrap().unwrap();
+        assert_eq!(after.confidence_tier, "verified");
+        assert!(after.confidence_score >= 0.80);
+
+        let kg_after = db.query_kg_for_app("notepad.exe", 20).unwrap();
+        assert!(kg_after.edges.iter().any(|e| e.relation == "verified_step"));
     }
 }

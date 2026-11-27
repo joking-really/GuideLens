@@ -129,6 +129,11 @@ export interface LatencyStats {
   count: number;
 }
 
+export type ResolutionTier =
+  | "tier0_playbook"
+  | "tier1_text_graph"
+  | "tier2_vision";
+
 export interface AskResponse {
   session_id: string;
   brain: BrainKind;
@@ -137,6 +142,53 @@ export interface AskResponse {
   capture_path: string | null;
   monitor: MonitorInfo | null;
   latency?: LatencyBreakdown | null;
+  resolution_tier?: ResolutionTier | (string & {}) | null;
+  tokens_saved?: number | null;
+  playbook_id?: string | null;
+}
+
+export interface PlaybookStepDto {
+  step_number: number;
+  instruction_line: string;
+  target_name?: string | null;
+  control_type?: string | null;
+  shortcut?: string | null;
+  terminal_command?: string | null;
+  action_kind?: string | null;
+  spoken_text?: string | null;
+  norm_bbox?: BBox | null;
+}
+
+export type PlaybookConfidenceTier = "verified" | "inferred" | "stale";
+
+export interface CompiledPlaybookDto {
+  id: string;
+  app_exe: string;
+  view_key: string;
+  canonical_goal: string;
+  display_label: string;
+  confidence_tier: PlaybookConfidenceTier | (string & {});
+  confidence_score: number;
+  success_count: number;
+  failure_count: number;
+  tokens_saved_est: number;
+  steps: PlaybookStepDto[];
+  updated_at: number;
+}
+
+export interface DefaultOptionsResponse {
+  active_app: string;
+  window_title: string;
+  options: CompiledPlaybookDto[];
+  total_tokens_saved: number;
+}
+
+export interface LearningStatsDto {
+  total_playbooks: number;
+  verified_playbooks: number;
+  stale_playbooks: number;
+  total_tier0_hits: number;
+  total_tokens_saved: number;
 }
 
 export type GroundedElementSource = "uia" | "taskbar" | "ocr" | "vision";
@@ -396,6 +448,8 @@ export interface Settings {
   capture_retention_days: number;
   onboarding_complete: boolean;
   bar_position: { x: number; y: number } | null;
+  bar_opacity: number;
+  bar_blur_enabled: boolean;
   cloud_url?: string;
   companion_id: CompanionId;
   companion_wander: boolean;
@@ -479,6 +533,8 @@ export const DEFAULT_SETTINGS: Settings = {
   capture_retention_days: 7,
   onboarding_complete: false,
   bar_position: null,
+  bar_opacity: 0.28,
+  bar_blur_enabled: true,
   companion_id: "pixel_cat",
   companion_wander: true,
   screenday_enabled: false,

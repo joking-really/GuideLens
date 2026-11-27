@@ -492,4 +492,45 @@ mod tests {
         assert!(events.iter().any(|e| (e.pct - 50.0).abs() < 1e-6));
         assert_eq!(events.last().map(|e| e.pct), Some(100.0));
     }
+
+    #[tokio::test]
+    async fn ollama_text_only_request_omits_images_field() {
+        let server = MockServer::start().await;
+        let step_plan_str = r#"{
+            "mode": "guide",
+            "total_steps": 1,
+            "steps": [{
+                "step_number": 1,
+                "instruction_line": "Click New Terminal.",
+                "target_id": 5,
+                "target_name": "New Terminal",
+                "control_type": "MenuItem",
+                "confidence": 0.92
+            }]
+        }"#;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "model": "qwen2.5vl:3b",
+                "message": { "role": "assistant", "content": step_plan_str },
+                "done": true
+            })))
+            .mount(&server)
+            .await;
+
+        let mut req = sample_request();
+        req.image_base64 = "   ".to_string();
+        req.max_tokens = Some(260);
+
+        let provider = OllamaProvider::with_base_url(server.uri(), "qwen2.5vl:3b");
+        let plan = provider.generate_plan(&req).await.expect("text-only plan");
+        assert_eq!(plan.steps[0].target_id, Some(5));
+
+        let recorded = server.received_requests().await.unwrap();
+        assert_eq!(recorded.len(), 1);
+        let body: Value = serde_json::from_slice(&recorded[0].body).unwrap();
+        assert!(body["messages"][1].get("images").is_none());
+        assert_eq!(body["options"]["num_predict"], json!(260));
+    }
 }

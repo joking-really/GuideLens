@@ -1252,4 +1252,62 @@ mod tests {
         .unwrap();
         assert_eq!(text, "How do I undo my last commit?");
     }
+
+    #[tokio::test]
+    async fn text_only_requests_omit_image_fields_across_all_byo_providers() {
+        let mut text_req = sample_req();
+        text_req.image_base64 = "   ".to_string();
+        text_req.image_path = String::new();
+        text_req.max_tokens = Some(260);
+
+        // 1. Gemini omits inlineData
+        let gem_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1beta/models/gemini-2.5-flash:generateContent"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "candidates": [{ "content": { "parts": [{ "text": sample_plan_json() }] } }]
+            })))
+            .mount(&gem_server)
+            .await;
+        let gem = ByoApiProvider::with_base_url(ByoProviderId::Gemini, "k", None, gem_server.uri());
+        gem.generate_plan(&text_req).await.unwrap();
+        let gem_body = String::from_utf8_lossy(&gem_server.received_requests().await.unwrap()[0].body).into_owned();
+        assert!(!gem_body.contains("inlineData"));
+
+        // 2. Anthropic omits image content block
+        let ant_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "content": [{ "type": "text", "text": sample_plan_json() }]
+            })))
+            .mount(&ant_server)
+            .await;
+        let ant = ByoApiProvider::with_base_url(ByoProviderId::Anthropic, "k", None, ant_server.uri());
+        ant.generate_plan(&text_req).await.unwrap();
+        let ant_body = String::from_utf8_lossy(&ant_server.received_requests().await.unwrap()[0].body).into_owned();
+        assert!(!ant_body.contains("\"type\":\"image\""));
+
+        // 3. OpenAI, Groq, OpenRouter, DeepSeek, CustomOpenAi omit image_url
+        for pid in [
+            ByoProviderId::OpenAi,
+            ByoProviderId::Groq,
+            ByoProviderId::OpenRouter,
+            ByoProviderId::DeepSeek,
+            ByoProviderId::CustomOpenAi,
+        ] {
+            let oai_server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{ "message": { "content": sample_plan_json() } }]
+                })))
+                .mount(&oai_server)
+                .await;
+            let prov = ByoApiProvider::with_base_url(pid, "k", None, oai_server.uri());
+            prov.generate_plan(&text_req).await.unwrap();
+            let raw_body = String::from_utf8_lossy(&oai_server.received_requests().await.unwrap()[0].body).into_owned();
+            assert!(!raw_body.contains("image_url"), "provider {:?} sent image_url on empty image", pid);
+        }
+    }
 }

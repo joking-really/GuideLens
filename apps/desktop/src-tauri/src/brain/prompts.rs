@@ -306,6 +306,19 @@ pub fn build_grounded_system_prompt(
     prompt
 }
 
+/// Builds a concise Tier-1 text-only system prompt for UIA + Knowledge Graph disambiguation without screenshot tokens.
+pub fn build_text_only_system_prompt(
+    active_exe: &str,
+    window_title: &str,
+    companion_id: &str,
+) -> String {
+    let mut prompt = build_grounded_system_prompt(active_exe, window_title, companion_id, false);
+    prompt.push_str(
+        "\n\nTIER-1 TEXT-ONLY GROUNDING MODE: No screenshot is attached. Resolve the request strictly using GROUNDED UI ELEMENTS (`target_id` integer), LEARNED WORKFLOW MEMORY, keyboard `shortcut`, or `terminal_command`. If the target UI element is not clearly listed in GROUNDED UI ELEMENTS and no shortcut/command applies, set `target_id: null`, `bbox: null`, and `confidence: 0.2` so visual fallback can inspect the screen.",
+    );
+    prompt
+}
+
 /// Builds the user prompt combining the active app context, screen resolution, and user query.
 pub fn build_user_prompt(
     query: &str,
