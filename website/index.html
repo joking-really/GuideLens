@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GuideLens: Windows on-screen AI copilot</title>
+  <meta name="description" content="GuideLens sees your active Windows app, locks bounding boxes onto real UI automation controls, and bridges local AI agents over MCP.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23252836'/%3E%3Cpath d='M8 12V8h4M20 8h4v4M8 20v4h4M20 24h4v-4' stroke='%2399d5b8' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@500&family=Wix+Madefor+Text:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./tokens.css">
+  <link rel="stylesheet" href="./scrollcraft.css">
+  <link rel="stylesheet" href="./base.css">
+  <link rel="stylesheet" href="./styles.css">
+  <script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div data-sc-progress aria-hidden="true"></div>
+
+  <header class="site-nav" id="top">
+    <div class="container site-nav__inner">
+      <a class="brand" href="#hero" aria-label="GuideLens home">GuideLens</a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu">Menu</button>
+      <nav class="site-nav__links" id="site-menu" aria-label="Primary">
+        <a href="#simulator">Workflow</a>
+        <a href="#companions">Companions</a>
+        <a href="#requirements">Requirements</a>
+        <a class="nav-download" href="#download">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- Act 1: Dusk Split Studio Hero -->
+    <section class="hero" id="hero" data-sc-act="flow">
+      <div class="hero__backdrop" aria-hidden="true">
+        <img class="hero__photo" data-sc-parallax="-0.12" src="./assets/hero-dusk.jpg" width="1920" height="1254" alt="" fetchpriority="high" decoding="async">
+        <div class="hero__scrim"></div>
+      </div>
+
+      <div class="container hero__grid">
+        <div class="hero__copy">
+          <h1>See the step right on screen</h1>
+          <p class="hero__lede">GuideLens highlights exact Windows controls with live UI automation.</p>
+          <div class="hero__actions">
+            <a class="btn btn--primary" href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/GuideLens-v2.2.0-windows-x64.exe">Download for Windows</a>
+            <a class="btn btn--day-quiet" href="https://github.com/joking-really/GuideLens" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+          </div>
+        </div>
+
+        <figure class="hero__stage glass">
+          <div class="hero__shot hero__shot--bar">
+            <img src="./assets/screenshot-floating-bar.png" width="1280" height="240" alt="GuideLens floating command bar over an active Windows workspace" decoding="async">
+          </div>
+          <div class="hero__shot hero__shot--overlay">
+            <img src="./assets/screenshot-overlay-pointing.png" width="1280" height="420" alt="Click-through overlay pointing Mochi and step badge onto Run Workflow" decoding="async">
+            <span class="hero__reticle" aria-hidden="true">
+              <i class="reticle__c reticle__c--tl"></i>
+              <i class="reticle__c reticle__c--tr"></i>
+              <i class="reticle__c reticle__c--bl"></i>
+              <i class="reticle__c reticle__c--br"></i>
+            </span>
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Act 2: Signature Move — Hairline Reticle Session Simulator -->
+    <section class="sim-act" id="simulator" data-sc-act="pin" data-sc-span="1.6">
+      <div class="sc-stage sim-stage">
+        <div class="container sim-grid">
+          <div class="sim-panel">
+            <h2 class="sim-title">One click moves the guide forward</h2>
+            <p class="lead sim-lede">Scroll or pick a phase to watch the reticle lock onto controls.</p>
+
+            <div class="sim-steps" role="tablist" aria-label="Guidance session phases">
+              <div class="sim-step-row">
+                <button class="sim-step" type="button" role="tab" id="sim-tab-0" aria-selected="true" aria-controls="sim-viewport" data-sim-step="0">
+                  <span class="sim-step__dot" aria-hidden="true"></span>
+                  <span class="sim-step__name">Summon</span>
+                </button>
+                <p class="sim-step__desc">Open the bar with Ctrl + Space.</p>
+              </div>
+              <div class="sim-step-row">
+                <button class="sim-step" type="button" role="tab" id="sim-tab-1" aria-selected="false" aria-controls="sim-viewport" tabindex="-1" data-sim-step="1">
+                  <span class="sim-step__dot" aria-hidden="true"></span>
+                  <span class="sim-step__name">Point and advance</span>
+                </button>
+                <p class="sim-step__desc">Click the target box to advance.</p>
+              </div>
+              <div class="sim-step-row">
+                <button class="sim-step" type="button" role="tab" id="sim-tab-2" aria-selected="false" aria-controls="sim-viewport" tabindex="-1" data-sim-step="2">
+                  <span class="sim-step__dot" aria-hidden="true"></span>
+                  <span class="sim-step__name">Remember</span>
+                </button>
+                <p class="sim-step__desc">Save resolved paths in SQLite graph.</p>
+              </div>
+            </div>
+
+            <p class="sim-status" id="sim-status" role="status" aria-live="polite" data-state="searching">
+              <span class="sim-status__pip" aria-hidden="true"></span>
+              <span class="sim-status__text">Command bar ready on Ctrl + Space</span>
+            </p>
+          </div>
+
+          <div class="sim-viewport glass" id="sim-viewport" role="tabpanel" aria-labelledby="sim-tab-0" data-phase="0">
+            <div class="sim-media">
+              <figure class="sim-frame sim-frame--bar">
+                <img src="./assets/screenshot-floating-bar.png" width="1280" height="240" alt="Translucent GuideLens command bar floating over workspace text" decoding="async">
+              </figure>
+              <figure class="sim-frame sim-frame--overlay">
+                <img src="./assets/screenshot-overlay-pointing.png" width="1280" height="420" alt="GuideLens pointing overlay highlighting the Run Workflow button" decoding="async">
+              </figure>
+
+              <div class="sim-reticle sim-reticle--0" aria-hidden="true">
+                <span class="sim-reticle__tag">Ctrl + Space</span>
+              </div>
+              <div class="sim-reticle sim-reticle--1" aria-hidden="true">
+                <span class="sim-reticle__tag">UIA rect locked</span>
+              </div>
+              <div class="sim-reticle sim-reticle--2" aria-hidden="true">
+                <span class="sim-reticle__tag">Graph saved</span>
+              </div>
+
+              <button class="sim-hitbox" type="button" id="sim-hitbox" aria-label="Click highlighted target inside simulator to advance step">
+                <span class="visually-hidden">Advance step</span>
+              </button>
+            </div>
+
+            <p class="sim-caption" id="sim-caption">Click the highlighted button to advance.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Act 3: Before / After Grounding Wipe -->
+    <section class="section grounding" id="grounding" data-sc-act="flow">
+      <div class="container grounding__grid" data-sc-in>
+        <div class="grounding__copy">
+          <h2>Snapped to real controls, never guessed</h2>
+          <p class="lead">Raw vision models drift across scaled displays. GuideLens locks onto live Windows UI Automation.</p>
+
+          <dl class="grounding__facts">
+            <div class="grounding__row">
+              <dt class="grounding__term grounding__term--drift">Vision estimate</dt>
+              <dd>Unanchored 0 to 1000 coordinates miss edges.</dd>
+            </div>
+            <div class="grounding__row">
+              <dt class="grounding__term grounding__term--snap">GuideLens hybrid</dt>
+              <dd>xcap, Set of Mark, and IUIAutomation snap exact rects.</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="well grounding__well">
+          <div class="wipe" id="grounding-wipe" style="--wipe: 72%;">
+            <div class="wipe__layer wipe__layer--before">
+              <img src="./assets/screenshot-overlay-pointing.png" width="1280" height="420" alt="" decoding="async">
+              <div class="wipe__box wipe__box--drift" aria-hidden="true">
+                <span>Vision 0 to 1000</span>
+              </div>
+            </div>
+            <div class="wipe__layer wipe__layer--after">
+              <img src="./assets/screenshot-overlay-pointing.png" width="1280" height="420" alt="Comparison between drifting vision box and exact UI Automation lock on Run Workflow" decoding="async">
+              <div class="wipe__box wipe__box--snap" aria-hidden="true">
+                <span>UIA rect locked</span>
+              </div>
+            </div>
+            <div class="wipe__divider" aria-hidden="true">
+              <span class="wipe__knob"></span>
+            </div>
+            <input class="wipe__range" id="wipe-range" type="range" min="12" max="88" value="72" aria-label="Compare vision drift against UI Automation snap">
+          </div>
+          <p class="well__caption">Drag across the frame to compare coordinate grounding.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Act 4: Companions & Shortcuts -->
+    <section class="section companions" id="companions" data-sc-act="flow">
+      <div class="container">
+        <div class="section-head" data-sc-in>
+          <h2>Four quiet guides on your desktop</h2>
+          <p class="lead">Monochrome companions perch above the taskbar and react to window focus.</p>
+        </div>
+
+        <div class="companions__grid" data-sc-in>
+          <div class="companions__list" role="tablist" aria-label="Companion personas">
+            <div class="comp-row">
+              <button class="comp-tab" type="button" role="tab" id="comp-tab-mochi" aria-selected="true" aria-controls="comp-detail" data-companion="mochi">
+                <span class="comp-tab__dot" aria-hidden="true"></span>
+                <span class="comp-tab__name">Mochi</span>
+              </button>
+              <span class="comp-tab__meta">Studio cat, F2</span>
+            </div>
+            <div class="comp-row">
+              <button class="comp-tab" type="button" role="tab" id="comp-tab-byte" aria-selected="false" aria-controls="comp-detail" tabindex="-1" data-companion="byte">
+                <span class="comp-tab__dot" aria-hidden="true"></span>
+                <span class="comp-tab__name">Byte</span>
+              </button>
+              <span class="comp-tab__meta">Obsidian bot, M2</span>
+            </div>
+            <div class="comp-row">
+              <button class="comp-tab" type="button" role="tab" id="comp-tab-sora" aria-selected="false" aria-controls="comp-detail" tabindex="-1" data-companion="sora">
+                <span class="comp-tab__dot" aria-hidden="true"></span>
+                <span class="comp-tab__name">Sora</span>
+              </button>
+              <span class="comp-tab__meta">Halo sprite, F2</span>
+            </div>
+            <div class="comp-row">
+              <button class="comp-tab" type="button" role="tab" id="comp-tab-flow" aria-selected="false" aria-controls="comp-detail" tabindex="-1" data-companion="flow">
+                <span class="comp-tab__dot" aria-hidden="true"></span>
+                <span class="comp-tab__name">Flow</span>
+              </button>
+              <span class="comp-tab__meta">Concentric ring, M2</span>
+            </div>
+          </div>
+
+          <div class="companions__stage">
+            <div class="comp-detail glass" id="comp-detail" role="tabpanel" aria-labelledby="comp-tab-mochi">
+              <figure class="comp-detail__hub">
+                <img src="./assets/screenshot-hub-companions.png" width="1280" height="820" alt="GuideLens Companion and Voice settings showing Mochi, Byte, Sora, and Flow" decoding="async">
+              </figure>
+              <div class="comp-detail__bar">
+                <div class="comp-detail__text">
+                  <h3 id="comp-name">Mochi</h3>
+                  <p id="comp-summary">Minimal ivory feline with local tiny-voca F2 cues.</p>
+                </div>
+                <div class="pose-switch" role="group" aria-label="Overlay pose captures">
+                  <button class="pose-btn" type="button" aria-pressed="true" data-pose="peek">Peek</button>
+                  <button class="pose-btn" type="button" aria-pressed="false" data-pose="dance">Dance</button>
+                  <button class="pose-btn" type="button" aria-pressed="false" data-pose="bonk">Re-ground</button>
+                </div>
+              </div>
+            </div>
+
+            <figure class="comp-pose glass">
+              <img id="pose-img" src="./assets/screenshot-overlay-peeking.png" width="520" height="400" alt="Mochi overlay companion peeking while Screen Day is on" decoding="async">
+              <figcaption id="pose-caption">Screen Day idle perch</figcaption>
+            </figure>
+          </div>
+        </div>
+
+        <div class="shortcuts-band" id="shortcuts" data-sc-in>
+          <div class="shortcuts-band__copy">
+            <h3>Every action sits on a global key</h3>
+            <dl class="shortcuts-list">
+              <div class="shortcuts-row"><dt>Command bar</dt><dd><kbd>Ctrl</kbd> + <kbd>Space</kbd></dd></div>
+              <div class="shortcuts-row"><dt>Companion only</dt><dd><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd></dd></div>
+              <div class="shortcuts-row"><dt>Microphone</dt><dd><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>M</kbd></dd></div>
+              <div class="shortcuts-row"><dt>Live session</dt><dd><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>L</kbd></dd></div>
+              <div class="shortcuts-row"><dt>Screen Day</dt><dd><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>D</kbd></dd></div>
+              <div class="shortcuts-row"><dt>Local Ollama</dt><dd><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>O</kbd></dd></div>
+              <div class="shortcuts-row"><dt>Agent CLI</dt><dd><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>A</kbd></dd></div>
+              <div class="shortcuts-row"><dt>Clear box</dt><dd><kbd>Esc</kbd></dd></div>
+            </dl>
+          </div>
+          <figure class="shortcuts-band__media glass">
+            <img src="./assets/screenshot-hub-shortcuts.png" width="1280" height="820" alt="GuideLens Settings screen listing global keyboard shortcuts and retention" decoding="async">
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- Act 5: Five Brains, Requirements & App Profiles -->
+    <section class="section brains" id="brains" data-sc-act="flow">
+      <div class="container">
+        <div class="section-head" data-sc-in>
+          <h2>Swap the brain without changing tools</h2>
+          <p class="lead">Run offline via Ollama, use API keys, or attach agent CLIs.</p>
+        </div>
+
+        <div class="table-wrap" data-sc-in>
+          <table class="brains-table">
+            <thead>
+              <tr>
+                <th scope="col">Mode</th>
+                <th scope="col">Backend</th>
+                <th scope="col">Connection</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td data-label="Mode"><code>local_vlm</code></td>
+                <td data-label="Backend">Ollama</td>
+                <td data-label="Connection">127.0.0.1:11434 (qwen2.5vl:3b default).</td>
+              </tr>
+              <tr>
+                <td data-label="Mode"><code>byo_api</code></td>
+                <td data-label="Backend">BYO key</td>
+                <td data-label="Connection">Gemini, OpenAI, Anthropic, Groq, OpenRouter.</td>
+              </tr>
+              <tr>
+                <td data-label="Mode"><code>agent_cli</code></td>
+                <td data-label="Backend">Agent CLI</td>
+                <td data-label="Connection">claude, codex, gemini, agy, hermes.</td>
+              </tr>
+              <tr>
+                <td data-label="Mode"><code>groq_pro</code></td>
+                <td data-label="Backend">Cloud Pro</td>
+                <td data-label="Connection">FastAPI proxy over Groq Vision.</td>
+              </tr>
+              <tr>
+                <td data-label="Mode"><code>agent_mcp</code></td>
+                <td data-label="Backend">MCP bridge</td>
+                <td data-label="Connection">Capture and overlay on 127.0.0.1:47615.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Act 5b: Windows Requirements & Supported App Profiles -->
+    <section class="section specs" id="requirements" data-sc-act="flow">
+      <div class="container">
+        <div class="section-head" data-sc-in>
+          <h2>Built for Windows desktops</h2>
+          <p class="lead">Windows 10 or 11 x64 with WebView2.</p>
+        </div>
+        <div class="specs-grid" data-sc-in>
+          <div class="specs-col">
+            <h3>Windows x64</h3>
+            <p>Standalone binary with optional Ollama vision.</p>
+          </div>
+          <div class="specs-col">
+            <h3>Privacy shield</h3>
+            <p>Skips password managers, private tabs, UAC.</p>
+          </div>
+          <div class="specs-col">
+            <h3>Fifteen app profiles</h3>
+            <p>Photoshop, Excel, PowerPoint, Docs, Word, Canva, Premiere, After Effects, VS Code, GitHub, Terminal, OpenCode, Antigravity, Settings, Chrome.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Act 6: Closing Try Stage -->
+    <section class="section download" id="download" data-sc-act="flow">
+      <div class="container download__grid" data-sc-in>
+        <div class="download__copy">
+          <h2>Ready for Windows 10 and 11</h2>
+          <p class="lead">Run the standalone installer or clone the repository.</p>
+
+          <div class="download__cta-row">
+            <a class="btn btn--primary" href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/GuideLens-v2.2.0-windows-x64.exe">Download for Windows</a>
+          </div>
+
+          <ul class="download__artifacts">
+            <li><span class="num">57.4 MB</span> installer</li>
+            <li><a href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/GuideLens-v2.2.0-windows-x64.zip">Portable ZIP (<span class="num">22.9 MB</span>)</a></li>
+            <li><a href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/SHA256SUMS.txt">SHA-256</a></li>
+          </ul>
+
+          <p class="download__note">Unsigned release: choose More info then Run anyway in SmartScreen.</p>
+
+          <div class="clone-box">
+            <code>git clone https://github.com/joking-really/GuideLens.git</code>
+            <button class="btn btn--quiet clone-box__btn" type="button" id="copy-clone" data-copy="git clone https://github.com/joking-really/GuideLens.git">Copy command</button>
+          </div>
+          <p class="clone-box__status" id="copy-status" aria-live="polite"></p>
+        </div>
+
+        <a class="demo-card glass" href="https://youtu.be/x-D5DxyOj_k" target="_blank" rel="noopener noreferrer">
+          <figure class="demo-card__media">
+            <img src="./assets/demo-poster.jpg" width="1280" height="720" alt="GuideLens three-minute product walkthrough poster" decoding="async">
+          </figure>
+          <div class="demo-card__foot">
+            <strong>Three-minute walkthrough</strong>
+            <span>YouTube demo</span>
+          </div>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container site-footer__inner">
+      <p class="site-footer__mast">GuideLens</p>
+      <div class="site-footer__meta">
+        <nav class="site-footer__links" aria-label="Footer">
+          <a href="https://github.com/joking-really/GuideLens/releases/download/v2.2.0/GuideLens-v2.2.0-windows-x64.exe">Download</a>
+          <a href="https://github.com/joking-really/GuideLens/releases/latest" target="_blank" rel="noopener noreferrer">Releases</a>
+          <a href="https://github.com/joking-really/GuideLens" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="https://github.com/joking-really/GuideLens/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
+          <a href="https://youtu.be/x-D5DxyOj_k" target="_blank" rel="noopener noreferrer">Watch demo</a>
+        </nav>
+        <p class="site-footer__credit">Photograph: <a href="https://commons.wikimedia.org/wiki/File:Vallee-brouillard.jpg" target="_blank" rel="noopener noreferrer">Thomas Bresson</a> (CC BY 3.0, Wikimedia Commons)</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./scrollcraft.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -34,6 +34,9 @@ captures/
 benchmarks/results/
 graphify-out/
 .hyperframes/
+demo-video/
+scrollcraft/
+.hallmark/
 
 # OS / editor
 .DS_Store
